@@ -1,0 +1,13 @@
+# Build artifacts
+/revu
+/revu.exe
+/dist/
+
+# Local review outputs
+summary.md
+findings.json
+.review-state/
+
+# Editor/OS
+.DS_Store
+*.swp

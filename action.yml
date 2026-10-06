@@ -1,0 +1,111 @@
+name: Review Engine
+description: General-purpose code review / PR review / issue review / repository audit.
+author: greadee
+
+branding:
+  icon: shield
+  color: purple
+
+inputs:
+  profile:
+    description: "Review profile: pr | issue | sprint | audit | impact"
+    required: false
+    default: pr
+  provider:
+    description: "Model provider (openai-compatible | fake)"
+    required: false
+    default: openai-compatible
+  model:
+    description: "Model id to use for semantic review"
+    required: false
+    default: ""
+  base:
+    description: "Base revision"
+    required: false
+    default: origin/main
+  head:
+    description: "Head revision"
+    required: false
+    default: HEAD
+  config:
+    description: "Path to revu.yaml in the caller repository"
+    required: false
+    default: revu.yaml
+  repository:
+    description: "owner/name used when publishing or commenting"
+    required: false
+    default: ${{ github.repository }}
+  pr:
+    description: "Pull request number (when the event is a PR)"
+    required: false
+    default: ""
+  publish:
+    description: "Archive findings to the bot branch"
+    required: false
+    default: "true"
+  comment:
+    description: "Post the summary as a PR comment"
+    required: false
+    default: "true"
+  archive-branch:
+    description: "Bot branch for archived findings"
+    required: false
+    default: review-artifacts
+  block-threshold:
+    description: "Severity at or above which the run fails (P0|P1|P2|P3)"
+    required: false
+    default: P1
+  api-key:
+    description: "Provider API key (pass a secret)"
+    required: false
+    default: ""
+
+outputs:
+  summary:
+    description: "Path to the rendered Markdown summary"
+    value: ${{ steps.run.outputs.summary }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: "1.26"
+
+    - name: Build revu
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: go build -o "$RUNNER_TEMP/revu" ./cmd/revu
+
+    - name: Run review
+      id: run
+      shell: bash
+      env:
+        REVIEW_PROVIDER_API_KEY: ${{ inputs.api-key }}
+        GITHUB_TOKEN: ${{ github.token }}
+        REVIEW_PROFILE: ${{ inputs.profile }}
+        REVIEW_PROVIDER: ${{ inputs.provider }}
+        REVIEW_MODEL: ${{ inputs.model }}
+        REVIEW_ARCHIVE_BRANCH: ${{ inputs.archive-branch }}
+        REVIEW_BLOCK_THRESHOLD: ${{ inputs.block-threshold }}
+      run: |
+        set -euo pipefail
+        printf '%s\n' "Revu CLI built from ${{ github.action_path }}"
+        args=(run
+          --config "${{ inputs.config }}"
+          --profile "${{ inputs.profile }}"
+          --base "${{ inputs.base }}"
+          --head "${{ inputs.head }}"
+          --repository "${{ inputs.repository }}"
+          --out summary.md
+          --json findings.json)
+        [ -n "${{ inputs.pr }}" ] && args+=(--pr "${{ inputs.pr }}")
+        [ "${{ inputs.publish }}" = "true" ] && args+=(--publish)
+        [ "${{ inputs.comment }}" = "true" ] && args+=(--comment)
+        set +e
+        "$RUNNER_TEMP/revu" "${args[@]}"
+        code=$?
+        set -e
+        echo "summary=summary.md" >> "$GITHUB_OUTPUT"
+        exit $code

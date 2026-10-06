@@ -1,0 +1,32 @@
+# Example revu.yaml — copy to the root of the repository you want reviewed.
+# Every field is optional; defaults are shown.
+
+profile: pr          # pr | issue | sprint | audit | impact
+mode: tracking       # tracking | stateless
+
+provider:
+  name: openai-compatible   # or: fake
+  baseUrl: https://api.openai.com/v1
+  model: gpt-4o-mini
+  apiKeyEnv: REVIEW_PROVIDER_API_KEY
+
+review:
+  static: true       # run language static analyzers
+  semantic: true     # run the model-backed semantic pass
+  maxFiles: 60
+  maxFileBytes: 200000
+  blockThreshold: P1 # run fails when a finding is at or above this severity
+
+archive:
+  enabled: true
+  branch: review-artifacts
+  dir: runs
+
+issueReview:
+  commentOnly: true  # default
+  autoReopen: false
+  blockMerge: false
+
+ignore:
+  - "vendor/**"
+  - "**/*.md"
