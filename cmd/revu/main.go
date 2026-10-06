@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/greadee/review-engine/internal/analyzers"
 	"github.com/greadee/review-engine/internal/config"
 	"github.com/greadee/review-engine/internal/engine"
 	"github.com/greadee/review-engine/internal/profiles"
@@ -143,12 +142,11 @@ func run(args []string) error {
 	}
 
 	eng := engine.New(engine.Options{
-		Config:    cfg,
-		Repo:      repo,
-		Provider:  prov,
-		Analyzers: analyzers.Default(),
-		Reviewer:  reviewer,
-		Store:     st,
+		Config:   cfg,
+		Repo:     repo,
+		Provider: prov,
+		Reviewer: reviewer,
+		Store:    st,
 	})
 
 	res, err := eng.RunRange(context.Background(), c.profile, c.base, c.head, c.repository, c.head)

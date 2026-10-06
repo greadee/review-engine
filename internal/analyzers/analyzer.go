@@ -13,8 +13,14 @@ import (
 type Target struct {
 	// Dir is the repository working directory.
 	Dir string
-	// Files are the reviewed paths relative to Dir.
+	// Files are the reviewed paths relative to Dir (changed for a PR, all for
+	// an audit).
 	Files []string
+	// AllFiles are all tracked paths relative to Dir, used for repo-wide
+	// reference analysis.
+	AllFiles []string
+	// WholeRepo is true for audit/sprint profiles.
+	WholeRepo bool
 }
 
 // Analyzer inspects a target and returns findings.

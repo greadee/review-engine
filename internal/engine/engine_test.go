@@ -118,6 +118,51 @@ func TestRunRangeResolvesVanishedFinding(t *testing.T) {
 	}
 }
 
+func TestDetectorsWired(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q")
+	writeFile(t, dir, "pkg/x.go", "package pkg\n\nfunc Orphan() {}\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "base")
+	base := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+	writeFile(t, dir, "pkg/x_test.go", "package pkg\n\nimport \"testing\"\n\nfunc TestX(t *testing.T) { Orphan() }\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "head")
+	head := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	cfg := config.Default()
+	cfg.Review.Static = true
+	cfg.Review.Semantic = false
+	repo, _ := vcs.Open(dir)
+	// Analyzers left nil so engine.New installs static analyzers + detectors.
+	eng := New(Options{Config: cfg, Repo: repo, Store: store.Stateless{}})
+
+	res, err := eng.RunRange(context.Background(), "audit", base, head, "o/r", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, f := range res.Findings {
+		if f.Detector == "detector.orphan" && f.Anchor == "orphan:Orphan" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected orphan detector finding, got %+v", res.Findings)
+	}
+}
+
+func writeFile(t *testing.T, dir, rel, content string) {
+	t.Helper()
+	full := filepath.Join(dir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRunRangeStateless(t *testing.T) {
 	dir, base, head := setupRepo(t)
 	fake := &provider.Fake{Responses: []string{`{"findings":[]}`}}

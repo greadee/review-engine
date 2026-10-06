@@ -10,7 +10,9 @@ import (
 
 	"github.com/greadee/review-engine/internal/analyzers"
 	"github.com/greadee/review-engine/internal/config"
+	"github.com/greadee/review-engine/internal/detectors"
 	"github.com/greadee/review-engine/internal/findings"
+	"github.com/greadee/review-engine/internal/profiles"
 	"github.com/greadee/review-engine/internal/provider"
 	"github.com/greadee/review-engine/internal/report"
 	"github.com/greadee/review-engine/internal/reviewers"
@@ -41,7 +43,7 @@ func New(opts Options) *Engine {
 		opts.Now = time.Now
 	}
 	if opts.Analyzers == nil {
-		opts.Analyzers = analyzers.Default()
+		opts.Analyzers = append(analyzers.Default(), detectors.Default()...)
 	}
 	if opts.Store == nil {
 		opts.Store = store.Stateless{}
@@ -62,10 +64,20 @@ func (e *Engine) RunRange(ctx context.Context, profile, base, head, repository, 
 		return Result{}, fmt.Errorf("engine: diff %s..%s: %w", base, head, err)
 	}
 	sc := scope.Resolve(profile, changes, e.opts.Config.Ignore)
+	allFiles, _ := e.opts.Repo.ListFiles(head)
+	wholeRepo := profile == profiles.Audit || profile == profiles.Sprint
+	if wholeRepo {
+		sc.Files = allFiles
+	}
 
 	set := findings.NewSet()
 	if e.opts.Config.Review.Static {
-		target := analyzers.Target{Dir: e.opts.Repo.Dir, Files: sc.Files}
+		target := analyzers.Target{
+			Dir:       e.opts.Repo.Dir,
+			Files:     sc.Files,
+			AllFiles:  allFiles,
+			WholeRepo: wholeRepo,
+		}
 		for _, a := range e.opts.Analyzers {
 			found, err := a.Analyze(ctx, target)
 			if err != nil {

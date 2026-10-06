@@ -84,6 +84,21 @@ See [`revu.example.yaml`](revu.example.yaml). All fields are optional. Environme
 variables (`REVIEW_PROFILE`, `REVIEW_MODEL`, `REVIEW_PROVIDER_API_KEY`, …) override
 the file, which is how the Action passes its inputs.
 
+## Detectors
+
+Beyond generic static analysis and the model pass, the engine runs specialized
+detectors that catch code which compiles and passes tests but is still wrong:
+
+| Detector | Catches |
+|---|---|
+| `detector.orphan` | Exported functions with only test callers, or no callers — the "not wired into production" class |
+| `detector.stale-reference` | Documentation pointing at repository paths that no longer exist |
+| `detector.fail-open` | Nil-guarded checks where a missing dependency silently disables the guard |
+| `detector.unfinished` | TODO/FIXME/XXX markers and not-implemented code paths |
+
+They run as analyzers: for a PR they inspect changed files (with the whole repo as
+reference context); for audit/sprint they scan the whole repository.
+
 ## Findings
 
 Each finding carries a stable fingerprint, a classification, a severity (P0–P3),
@@ -101,6 +116,7 @@ internal/
   provider            Provider interface, openai-compatible, fake, registry
   scope               profile -> files
   analyzers           static runners (Go today)
+  detectors           orphan/wiring, stale-reference, fail-open, unfinished
   reviewers           semantic rubric pass
   findings            schema, fingerprint, lifecycle
   store               JSON tracking store + stateless
@@ -123,11 +139,13 @@ gofmt -l .
 
 ## Status
 
-Stage 0–1 of the sprint plan: the engine runs the `pr` profile end-to-end with the
-Go static analyzer and the semantic pass, with tracking and archiving. See
-[`sprint-plan.md`](sprint-plan.md). The `issue`, `sprint`, `audit`, and `impact`
-profiles are wired as configurations over the same pipeline; their dedicated
-extractors and detectors are the next stages.
+Stages 0–2 of the sprint plan plus the Stage 5 specialized detectors: the engine runs
+the `pr` and `audit` profiles end-to-end with the Go static analyzer, the semantic
+pass, cross-run tracking with a delta section, archiving, and the orphan/wiring,
+stale-reference, fail-open, and unfinished detectors. The `issue`, `sprint`, and
+`impact` profiles are wired as configurations over the same pipeline; their dedicated
+extractors (acceptance-criteria mapping, closure gating) and the remaining
+fork-safe publishing workflow are the next stages. See [`sprint-plan.md`](sprint-plan.md).
 
 ## License
 
