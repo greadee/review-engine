@@ -48,6 +48,8 @@ func main() {
 		for _, name := range provider.Names() {
 			fmt.Println(name)
 		}
+	case "init":
+		err = initConfig(os.Args[2:])
 	case "version":
 		fmt.Println(version)
 	case "-h", "--help", "help":
@@ -74,6 +76,7 @@ Usage:
   revu plan     [flags]   print the resolved scope without reviewing
   revu report   [flags]   render a findings JSON file to Markdown
   revu providers          list registered model providers
+  revu init               write a starter revu.yaml
   revu version            print version
 
 Run "revu run -h" for flags.
@@ -527,6 +530,53 @@ func renderReport(args []string) error {
 	fmt.Print(md)
 	return nil
 }
+
+func initConfig(args []string) error {
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	path := fs.String("path", "revu.yaml", "path to write")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if _, err := os.Stat(*path); err == nil {
+		return fmt.Errorf("%s already exists", *path)
+	}
+	if err := os.WriteFile(*path, []byte(starterConfig), 0o644); err != nil {
+		return err
+	}
+	fmt.Printf("wrote %s\n", *path)
+	return nil
+}
+
+const starterConfig = `# revu configuration — all fields are optional.
+profile: pr          # pr | issue | sprint | audit | impact
+mode: tracking       # tracking | stateless
+
+provider:
+  name: openai-compatible
+  baseUrl: https://api.openai.com/v1
+  model: gpt-4o-mini
+  apiKeyEnv: REVIEW_PROVIDER_API_KEY
+
+review:
+  static: true
+  semantic: true
+  maxFiles: 60
+  maxFileBytes: 200000
+  blockThreshold: P1
+
+archive:
+  enabled: true
+  branch: review-artifacts
+  dir: runs
+
+issueReview:
+  commentOnly: true
+  autoReopen: false
+  blockMerge: false
+
+ignore:
+  - "vendor/**"
+`
 
 func splitRepo(s string) (string, string, error) {
 	parts := strings.SplitN(strings.TrimSpace(s), "/", 2)
