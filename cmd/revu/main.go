@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/greadee/review-engine/internal/bundle"
 	"github.com/greadee/review-engine/internal/config"
 	"github.com/greadee/review-engine/internal/engine"
 	"github.com/greadee/review-engine/internal/profiles"
@@ -33,6 +34,10 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		err = run(os.Args[2:])
+	case "collect":
+		err = collectCmd(os.Args[2:])
+	case "finalize":
+		err = finalizeCmd(os.Args[2:])
 	case "issue":
 		err = issueReview(os.Args[2:])
 	case "plan":
@@ -62,12 +67,14 @@ func usage() {
 	fmt.Fprint(os.Stderr, `revu — general-purpose review engine
 
 Usage:
-  revu run    [flags]   run a review profile
-  revu issue  [flags]   review an issue's acceptance criteria
-  revu plan   [flags]   print the resolved scope without reviewing
-  revu report [flags]   render a findings JSON file to Markdown
-  revu providers        list registered model providers
-  revu version          print version
+  revu run      [flags]   collect + finalize in one process
+  revu collect  [flags]   no-secret phase: produce a review bundle
+  revu finalize [flags]   secret phase: review a bundle, report, publish
+  revu issue    [flags]   review an issue's acceptance criteria
+  revu plan     [flags]   print the resolved scope without reviewing
+  revu report   [flags]   render a findings JSON file to Markdown
+  revu providers          list registered model providers
+  revu version            print version
 
 Run "revu run -h" for flags.
 `)
@@ -238,6 +245,150 @@ func defaultKeyEnv(cfg config.Config) string {
 		return cfg.Provider.APIKeyEnv
 	}
 	return "REVIEW_PROVIDER_API_KEY"
+}
+
+func collectCmd(args []string) error {
+	fs := flag.NewFlagSet("collect", flag.ContinueOnError)
+	var c commonFlags
+	addCommon(fs, &c)
+	out := fs.String("out", "bundle.json", "output bundle path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := config.Load(c.configPath)
+	if err != nil {
+		return err
+	}
+	if c.profile == "" {
+		c.profile = cfg.Profile
+	}
+	if !profiles.Valid(c.profile) {
+		return fmt.Errorf("unknown profile %q", c.profile)
+	}
+	repo, err := vcs.Open(c.repoDir)
+	if err != nil {
+		return err
+	}
+	// Collect never needs a provider or tracker: it must not touch secrets.
+	eng := engine.New(engine.Options{Config: cfg, Repo: repo})
+	b, err := eng.Collect(context.Background(), c.profile, c.base, c.head, c.repository, c.head)
+	if err != nil {
+		return err
+	}
+	if err := bundle.Save(*out, b); err != nil {
+		return err
+	}
+	fmt.Printf("wrote %s (profile=%s, %d files, %d static findings)\n", *out, b.Profile, len(b.Files), len(b.StaticFindings))
+	return nil
+}
+
+func finalizeCmd(args []string) error {
+	fs := flag.NewFlagSet("finalize", flag.ContinueOnError)
+	var c commonFlags
+	addCommon(fs, &c)
+	bundlePath := fs.String("bundle", "bundle.json", "input bundle path")
+	outPath := fs.String("out", "", "write the Markdown summary to a file")
+	jsonPath := fs.String("json", "", "write the findings JSON to a file")
+	stateDir := fs.String("state-dir", ".review-state", "tracking state directory")
+	dryRun := fs.Bool("dry-run", false, "use the fake provider and skip GitHub writes")
+	noBlock := fs.Bool("no-block", false, "do not fail on blocking findings")
+	comment := fs.Bool("comment", false, "post the summary as a PR comment")
+	publish := fs.Bool("publish", false, "archive findings to the bot branch")
+	providerName := fs.String("provider", "", "override provider name")
+	model := fs.String("model", "", "override model id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := config.Load(c.configPath)
+	if err != nil {
+		return err
+	}
+	if *providerName != "" {
+		cfg.Provider.Name = *providerName
+	}
+	if *model != "" {
+		cfg.Provider.Model = *model
+	}
+	b, err := bundle.Load(*bundlePath)
+	if err != nil {
+		return err
+	}
+	if len(cfg.Review.Rubric) == 0 {
+		cfg.Review.Rubric = b.Rubric
+	}
+	prov, err := buildProvider(cfg, *dryRun)
+	if err != nil {
+		return err
+	}
+	var st store.Store = store.NewJSON(*stateDir)
+	if cfg.Mode == config.ModeStateless {
+		st = store.Stateless{}
+	}
+	eng := engine.New(engine.Options{
+		Config:   cfg,
+		Provider: prov,
+		Reviewer: reviewers.New(prov, cfg.Provider.Model),
+		Store:    st,
+	})
+	res, err := eng.Finalize(context.Background(), b)
+	if err != nil {
+		return err
+	}
+
+	markdown := report.ReviewMarkdown(res.Run)
+	if b.Profile == profiles.Audit || b.Profile == profiles.Sprint {
+		markdown = report.AuditMarkdown(res.Run)
+	}
+	fmt.Print(markdown)
+	if *outPath != "" {
+		if err := os.WriteFile(*outPath, []byte(markdown), 0o644); err != nil {
+			return err
+		}
+	}
+	if *jsonPath != "" {
+		data, err := report.JSON(res.Run)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(*jsonPath, append(data, '\n'), 0o644); err != nil {
+			return err
+		}
+	}
+
+	if (*publish || *comment) && !*dryRun {
+		repoRef := c.repository
+		if repoRef == "" {
+			repoRef = b.Repository
+		}
+		owner, name, err := splitRepo(repoRef)
+		if err != nil {
+			return err
+		}
+		gh := vcs.NewGitHub("")
+		if *publish {
+			url, err := eng.Publish(context.Background(), gh, owner, name, res)
+			if err != nil {
+				return err
+			}
+			res.Run.ArchiveURL = url
+			fmt.Printf("\narchived findings: %s\n", url)
+		}
+		if *comment && c.pr > 0 {
+			body := report.ReviewMarkdown(res.Run)
+			if res.Run.ArchiveURL != "" {
+				body += fmt.Sprintf("\nFull findings: %s\n", res.Run.ArchiveURL)
+			}
+			if err := gh.Comment(context.Background(), owner, name, c.pr, body); err != nil {
+				return err
+			}
+			fmt.Printf("posted comment on PR #%d\n", c.pr)
+		}
+	}
+
+	if !*noBlock && len(res.Run.Blocking()) > 0 {
+		return fmt.Errorf("%d blocking finding(s) at or above %s", len(res.Run.Blocking()), res.Run.BlockThreshold)
+	}
+	return nil
 }
 
 func issueReview(args []string) error {

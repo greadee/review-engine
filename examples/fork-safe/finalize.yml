@@ -1,0 +1,37 @@
+# Fork-safe review — phase 2 of 2 (finalize, secrets).
+#
+# Triggered by completion of the "Review collect" workflow. This workflow has
+# secrets but never checks out the pull request, so untrusted code cannot run
+# in the same job as the API key.
+
+name: Review finalize
+
+on:
+  workflow_run:
+    workflows: ["Review collect"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read
+
+jobs:
+  finalize:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: revu-bundle
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - uses: greadee/review-engine@main
+        with:
+          phase: finalize
+          repository: ${{ github.event.workflow_run.repository.full_name }}
+          pr: ${{ github.event.workflow_run.pull_requests[0].number }}
+          model: gpt-4o-mini
+          bundle: bundle.json
+          api-key: ${{ secrets.REVIEW_PROVIDER_API_KEY }}

@@ -60,9 +60,26 @@ Closure gating is comment-only by default. `--block` fails the step when criteri
 are unmet (use as a required check), and `--reopen` reopens a closed issue with
 unmet criteria. Both are opt-in via `revu.yaml` / action inputs.
 
-> Fork PRs cannot access secrets. For untrusted forks, run the static/context job
-> without secrets and perform the model call and publishing in a separate
-> `workflow_run` job. See `docs/adr/0003-security-model.md`.
+> Fork PRs cannot access secrets. For untrusted forks, run the collect phase
+> without secrets and finalize in a separate secret-bearing job. See
+> [`docs/adr/0005-two-phase-review.md`](docs/adr/0005-two-phase-review.md) and
+> [`examples/fork-safe/`](examples/fork-safe/).
+
+## Fork-safe CI
+
+A review runs in two phases so untrusted code never shares a job with the API key:
+
+```bash
+# Phase 1 — no secrets, safe against untrusted code
+revu collect --profile pr --base origin/main --head HEAD --out bundle.json
+
+# Phase 2 — secrets, never checks out the PR
+revu finalize --bundle bundle.json --comment --publish
+```
+
+`revu run` is simply collect + finalize in one process. The reusable workflow
+[`.github/workflows/review.yml`](.github/workflows/review.yml) runs both jobs;
+for forks, bridge them with `workflow_run` as shown in `examples/fork-safe/`.
 
 ## Local CLI
 
@@ -131,9 +148,10 @@ cmd/revu              CLI
 internal/
   config              revu.yaml + env overrides
   vcs                 git + GitHub REST
+  bundle              collect/finalize artifact (fork-safe split)
   provider            Provider interface, openai-compatible, fake, registry
   scope               profile -> files
-  analyzers           static runners (Go today)
+  analyzers           static runners (Go, Python, TypeScript)
   detectors           orphan/wiring, stale-reference, fail-open, unfinished
   reviewers           semantic rubric pass
   findings            schema, fingerprint, lifecycle
@@ -157,14 +175,14 @@ gofmt -l .
 
 ## Status
 
-Stages 0–2 of the sprint plan, the Stage 5 specialized detectors, and Stage 4 issue
-review: the engine runs the `pr`, `audit`, and `issue` profiles end-to-end with the
-Go static analyzer, the semantic pass, cross-run tracking with a delta section,
+Stages 0–5: the engine runs the `pr`, `audit`, and `issue` profiles end-to-end with
+the Go static analyzer, the semantic pass, cross-run tracking with a delta section,
 archiving, the orphan/wiring, stale-reference, fail-open, and unfinished detectors,
-and acceptance-criteria verification with closure gating. The `sprint` and `impact`
-profiles are wired as configurations over the same pipeline; the fully fork-safe
-two-job publishing workflow is the remaining hardening item. See
-[`sprint-plan.md`](sprint-plan.md).
+acceptance-criteria verification with closure gating, a fork-safe two-phase
+(`collect`/`finalize`) flow with a reusable workflow, and ecosystem detection for
+Go, Python, and TypeScript analyzers. See
+[`sprint-plan.md`](sprint-plan.md). Remaining: multi-repo conveniences and an
+optional SQLite store.
 
 ## License
 

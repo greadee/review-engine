@@ -1,5 +1,10 @@
 // Package engine orchestrates the review pipeline: scope resolution, static
 // analysis, semantic review, normalization, lifecycle tracking, and rendering.
+//
+// A review runs in one of two shapes:
+//   - RunRange: collect + finalize in one process (local use, same-repo CI).
+//   - Collect then Finalize: split across a no-secret and a secret-bearing job
+//     for fork-safe CI.
 package engine
 
 import (
@@ -12,11 +17,9 @@ import (
 	"github.com/greadee/review-engine/internal/config"
 	"github.com/greadee/review-engine/internal/detectors"
 	"github.com/greadee/review-engine/internal/findings"
-	"github.com/greadee/review-engine/internal/profiles"
 	"github.com/greadee/review-engine/internal/provider"
 	"github.com/greadee/review-engine/internal/report"
 	"github.com/greadee/review-engine/internal/reviewers"
-	"github.com/greadee/review-engine/internal/scope"
 	"github.com/greadee/review-engine/internal/store"
 	"github.com/greadee/review-engine/internal/vcs"
 )
@@ -57,84 +60,13 @@ type Result struct {
 	Findings []findings.Finding
 }
 
-// RunRange reviews repository changes between base and head using profile.
+// RunRange collects and finalizes in one process.
 func (e *Engine) RunRange(ctx context.Context, profile, base, head, repository, ref string) (Result, error) {
-	changes, err := e.opts.Repo.Changes(base, head)
-	if err != nil {
-		return Result{}, fmt.Errorf("engine: diff %s..%s: %w", base, head, err)
-	}
-	sc := scope.Resolve(profile, changes, e.opts.Config.Ignore)
-	allFiles, _ := e.opts.Repo.ListFiles(head)
-	wholeRepo := profile == profiles.Audit || profile == profiles.Sprint
-	if wholeRepo {
-		sc.Files = allFiles
-	}
-
-	set := findings.NewSet()
-	if e.opts.Config.Review.Static {
-		target := analyzers.Target{
-			Dir:       e.opts.Repo.Dir,
-			Files:     sc.Files,
-			AllFiles:  allFiles,
-			WholeRepo: wholeRepo,
-		}
-		for _, a := range e.opts.Analyzers {
-			found, err := a.Analyze(ctx, target)
-			if err != nil {
-				return Result{}, fmt.Errorf("engine: analyzer %s: %w", a.Name(), err)
-			}
-			for _, f := range found {
-				set.Add(f)
-			}
-		}
-	}
-
-	if e.opts.Config.Review.Semantic {
-		if e.opts.Reviewer == nil || e.opts.Provider == nil {
-			return Result{}, fmt.Errorf("engine: semantic review is enabled but no provider is configured")
-		}
-		files := e.gather(head, sc.Files)
-		found, err := e.opts.Reviewer.Review(ctx, reviewers.Input{
-			Profile: profile,
-			Rubric:  e.opts.Config.Review.Rubric,
-			Files:   files,
-		})
-		if err != nil {
-			return Result{}, fmt.Errorf("engine: semantic review: %w", err)
-		}
-		for _, f := range found {
-			set.Add(f)
-		}
-	}
-
-	runID := runID(profile, head, e.opts.Now())
-	prev, err := e.opts.Store.Load(ctx)
+	b, err := e.Collect(ctx, profile, base, head, repository, ref)
 	if err != nil {
 		return Result{}, err
 	}
-	cur := findings.Lifecycle(prev.Findings, set.Items(), runID)
-	resolved := findings.Compare(prev.Findings, cur)
-	if e.opts.Config.Mode != config.ModeStateless {
-		if err := e.opts.Store.Save(ctx, store.State{RunID: runID, Findings: findings.MergeTracking(cur, resolved)}); err != nil {
-			return Result{}, err
-		}
-	}
-
-	return Result{
-		Run: report.Run{
-			ID:             runID,
-			Profile:        profile,
-			Repository:     repository,
-			Ref:            ref,
-			Base:           base,
-			Head:           head,
-			Generated:      e.opts.Now().UTC(),
-			Findings:       cur,
-			Resolved:       resolved,
-			BlockThreshold: threshold(e.opts.Config.Review.BlockThreshold),
-		},
-		Findings: cur,
-	}, nil
+	return e.Finalize(ctx, b)
 }
 
 func (e *Engine) gather(ref string, paths []string) []reviewers.FileContent {

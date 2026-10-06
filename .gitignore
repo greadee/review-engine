@@ -6,6 +6,7 @@
 # Local review outputs
 summary.md
 findings.json
+bundle.json
 .review-state/
 
 # Editor/OS

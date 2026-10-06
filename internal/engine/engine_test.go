@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/greadee/review-engine/internal/bundle"
 	"github.com/greadee/review-engine/internal/config"
 	"github.com/greadee/review-engine/internal/findings"
 	"github.com/greadee/review-engine/internal/provider"
@@ -149,6 +150,45 @@ func TestDetectorsWired(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected orphan detector finding, got %+v", res.Findings)
+	}
+}
+
+func TestCollectFinalizeSplit(t *testing.T) {
+	dir, base, head := setupRepo(t)
+	fake := &provider.Fake{Responses: []string{`{"findings":[{"title":"bug","classification":"Bug","severity":"P1","file":"a.go","line":3,"anchor":"bug-x"}]}`}}
+	eng := newEngine(t, dir, fake, store.NewJSON(t.TempDir()))
+	ctx := context.Background()
+
+	b, err := eng.Collect(ctx, "pr", base, head, "o/r", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fake.Calls() != 0 {
+		t.Fatal("collect must not call the provider")
+	}
+	if len(b.Files) != 1 || b.Files[0].Path != "a.go" {
+		t.Fatalf("collect should carry file contents: %+v", b.Files)
+	}
+	if b.RunID == "" || b.Profile != "pr" {
+		t.Fatalf("bundle metadata missing: %+v", b)
+	}
+
+	res, err := eng.Finalize(ctx, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Findings) != 1 || res.Findings[0].Anchor != "bug-x" {
+		t.Fatalf("finalize should apply semantic review: %+v", res.Findings)
+	}
+}
+
+func TestFinalizeFailsClosedWithoutProvider(t *testing.T) {
+	cfg := config.Default()
+	cfg.Review.Semantic = true
+	eng := New(Options{Config: cfg, Store: store.Stateless{}})
+	b := bundle.Bundle{Version: bundle.Version, Profile: "pr", RunID: "pr@x"}
+	if _, err := eng.Finalize(context.Background(), b); err == nil {
+		t.Fatal("expected fail-closed error when semantic is enabled without a provider")
 	}
 }
 

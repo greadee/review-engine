@@ -7,6 +7,14 @@ branding:
   color: purple
 
 inputs:
+  phase:
+    description: "all | collect (no secrets) | finalize (secrets)"
+    required: false
+    default: all
+  bundle:
+    description: "Bundle path for collect/finalize"
+    required: false
+    default: bundle.json
   profile:
     description: "Review profile: pr | issue | sprint | audit | impact"
     required: false
@@ -104,6 +112,34 @@ runs:
       run: |
         set -euo pipefail
         echo "summary=summary.md" >> "$GITHUB_OUTPUT"
+        phase="${{ inputs.phase }}"
+
+        if [ "$phase" = "collect" ]; then
+          "$RUNNER_TEMP/revu" collect \
+            --config "${{ inputs.config }}" \
+            --profile "${{ inputs.profile }}" \
+            --base "${{ inputs.base }}" \
+            --head "${{ inputs.head }}" \
+            --repository "${{ inputs.repository }}" \
+            --out "${{ inputs.bundle }}"
+          exit 0
+        fi
+
+        if [ "$phase" = "finalize" ]; then
+          args=(finalize
+            --config "${{ inputs.config }}"
+            --bundle "${{ inputs.bundle }}"
+            --repository "${{ inputs.repository }}"
+            --out summary.md
+            --json findings.json)
+          [ -n "${{ inputs.pr }}" ] && args+=(--pr "${{ inputs.pr }}")
+          [ "${{ inputs.publish }}" = "true" ] && args+=(--publish)
+          [ "${{ inputs.comment }}" = "true" ] && args+=(--comment)
+          [ "${{ inputs.block }}" = "true" ] || args+=(--no-block)
+          "$RUNNER_TEMP/revu" "${args[@]}"
+          exit $?
+        fi
+
         if [ "${{ inputs.profile }}" = "issue" ]; then
           args=(issue
             --config "${{ inputs.config }}"
@@ -114,18 +150,19 @@ runs:
           [ "${{ inputs.reopen }}" = "true" ] && args+=(--reopen)
           [ "${{ inputs.block }}" = "true" ] && args+=(--block)
           "$RUNNER_TEMP/revu" "${args[@]}"
-        else
-          args=(run
-            --config "${{ inputs.config }}"
-            --profile "${{ inputs.profile }}"
-            --base "${{ inputs.base }}"
-            --head "${{ inputs.head }}"
-            --repository "${{ inputs.repository }}"
-            --out summary.md
-            --json findings.json)
-          [ -n "${{ inputs.pr }}" ] && args+=(--pr "${{ inputs.pr }}")
-          [ "${{ inputs.publish }}" = "true" ] && args+=(--publish)
-          [ "${{ inputs.comment }}" = "true" ] && args+=(--comment)
-          [ "${{ inputs.block }}" = "true" ] || args+=(--no-block)
-          "$RUNNER_TEMP/revu" "${args[@]}"
+          exit $?
         fi
+
+        args=(run
+          --config "${{ inputs.config }}"
+          --profile "${{ inputs.profile }}"
+          --base "${{ inputs.base }}"
+          --head "${{ inputs.head }}"
+          --repository "${{ inputs.repository }}"
+          --out summary.md
+          --json findings.json)
+        [ -n "${{ inputs.pr }}" ] && args+=(--pr "${{ inputs.pr }}")
+        [ "${{ inputs.publish }}" = "true" ] && args+=(--publish)
+        [ "${{ inputs.comment }}" = "true" ] && args+=(--comment)
+        [ "${{ inputs.block }}" = "true" ] || args+=(--no-block)
+        "$RUNNER_TEMP/revu" "${args[@]}"

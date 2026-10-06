@@ -1,0 +1,103 @@
+# Reusable review workflow.
+#
+# Callers (same repository or trusted PRs):
+#
+#   jobs:
+#     review:
+#       uses: greadee/review-engine/.github/workflows/review.yml@main
+#       with:
+#         profile: pr
+#         base: origin/main
+#         head: ${{ github.sha }}
+#         pr: ${{ github.event.pull_request.number }}
+#       secrets:
+#         provider-api-key: ${{ secrets.REVIEW_PROVIDER_API_KEY }}
+#
+# The collect job runs without secrets (safe against untrusted code); the
+# finalize job never checks out the repository and only consumes the bundle.
+# For untrusted forks, secrets are unavailable to `pull_request`, so bridge the
+# two phases with `workflow_run` — see examples/fork-safe/.
+
+name: Review (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      profile:
+        type: string
+        default: pr
+      base:
+        type: string
+        default: origin/main
+      head:
+        type: string
+        default: HEAD
+      pr:
+        type: string
+        default: ""
+      model:
+        type: string
+        default: ""
+      repository:
+        type: string
+        default: ""
+      publish:
+        type: string
+        default: "true"
+      comment:
+        type: string
+        default: "true"
+      block:
+        type: string
+        default: "true"
+    secrets:
+      provider-api-key:
+        required: false
+
+jobs:
+  collect:
+    name: collect (no secrets)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: greadee/review-engine@main
+        with:
+          phase: collect
+          profile: ${{ inputs.profile }}
+          base: ${{ inputs.base }}
+          head: ${{ inputs.head }}
+          repository: ${{ inputs.repository }}
+          bundle: bundle.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: revu-bundle
+          path: bundle.json
+          retention-days: 7
+
+  finalize:
+    name: finalize (secrets)
+    needs: collect
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: revu-bundle
+      - uses: greadee/review-engine@main
+        with:
+          phase: finalize
+          model: ${{ inputs.model }}
+          repository: ${{ inputs.repository }}
+          pr: ${{ inputs.pr }}
+          publish: ${{ inputs.publish }}
+          comment: ${{ inputs.comment }}
+          block: ${{ inputs.block }}
+          bundle: bundle.json
+          api-key: ${{ secrets.provider-api-key }}

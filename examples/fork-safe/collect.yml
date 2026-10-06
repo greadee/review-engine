@@ -1,0 +1,34 @@
+# Fork-safe review — phase 1 of 2 (collect, no secrets).
+#
+# Copy this to the consuming repository's .github/workflows/ alongside
+# finalize.yml. This workflow runs on untrusted PRs and never sees secrets.
+
+name: Review collect
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: greadee/review-engine@main
+        with:
+          phase: collect
+          profile: pr
+          base: origin/${{ github.base_ref }}
+          head: ${{ github.sha }}
+          repository: ${{ github.repository }}
+          bundle: bundle.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: revu-bundle
+          path: bundle.json
+          retention-days: 7

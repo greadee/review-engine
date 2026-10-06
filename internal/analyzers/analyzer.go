@@ -29,8 +29,8 @@ type Analyzer interface {
 	Analyze(ctx context.Context, t Target) ([]findings.Finding, error)
 }
 
-// Default returns the analyzers enabled by default. The Go analyzer is a no-op
-// when no Go module is present.
+// Default returns the analyzers enabled by default. Each analyzer is a no-op
+// when its ecosystem is not detected or its tooling is unavailable.
 func Default() []Analyzer {
-	return []Analyzer{NewGo()}
+	return []Analyzer{NewGo(), NewPython(), NewTypeScript()}
 }
