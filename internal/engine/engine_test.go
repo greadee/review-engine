@@ -152,6 +152,31 @@ func TestDetectorsWired(t *testing.T) {
 	}
 }
 
+func TestRunIssueGatesClosedIssue(t *testing.T) {
+	cfg := config.Default()
+	cfg.Review.Static = false
+	cfg.Review.Semantic = false
+	eng := New(Options{Config: cfg, Store: store.Stateless{}})
+
+	closed := vcs.Issue{Number: 9, State: "closed", Body: "## Acceptance criteria\n\n- [ ] shipped\n- [x] documented\n"}
+	res, err := eng.RunIssue(context.Background(), closed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Run.Blocking()) != 1 {
+		t.Fatalf("expected 1 blocking criterion, got %+v", res.Findings)
+	}
+
+	open := vcs.Issue{Number: 9, State: "open", Body: closed.Body}
+	res, err = eng.RunIssue(context.Background(), open)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Run.Blocking()) != 0 {
+		t.Fatalf("open issue should not block, got %+v", res.Run.Blocking())
+	}
+}
+
 func writeFile(t *testing.T, dir, rel, content string) {
 	t.Helper()
 	full := filepath.Join(dir, filepath.FromSlash(rel))

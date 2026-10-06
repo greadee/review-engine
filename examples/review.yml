@@ -1,0 +1,36 @@
+# Example: single-step PR review.
+# Copy this into the consuming repository's .github/workflows/ and adjust.
+#
+# This is the whole integration: one `uses:` step. Everything else is
+# configuration in revu.yaml (see revu.example.yaml).
+#
+# Fork note: `pull_request` from a fork cannot read secrets. For untrusted forks,
+# run the model call in a separate `workflow_run` job as described in
+# docs/adr/0003-security-model.md; same-repository PRs can use this directly.
+
+name: Review
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write       # archive findings to the bot branch
+  pull-requests: write  # post the summary comment
+  issues: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: greadee/review-engine@v1
+        with:
+          profile: pr
+          model: gpt-4o-mini
+          base: origin/${{ github.base_ref }}
+          head: ${{ github.sha }}
+          pr: ${{ github.event.pull_request.number }}
+          api-key: ${{ secrets.REVIEW_PROVIDER_API_KEY }}

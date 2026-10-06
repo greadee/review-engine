@@ -33,10 +33,16 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		err = run(os.Args[2:])
+	case "issue":
+		err = issueReview(os.Args[2:])
 	case "plan":
 		err = plan(os.Args[2:])
 	case "report":
 		err = renderReport(os.Args[2:])
+	case "providers":
+		for _, name := range provider.Names() {
+			fmt.Println(name)
+		}
 	case "version":
 		fmt.Println(version)
 	case "-h", "--help", "help":
@@ -57,8 +63,10 @@ func usage() {
 
 Usage:
   revu run    [flags]   run a review profile
+  revu issue  [flags]   review an issue's acceptance criteria
   revu plan   [flags]   print the resolved scope without reviewing
   revu report [flags]   render a findings JSON file to Markdown
+  revu providers        list registered model providers
   revu version          print version
 
 Run "revu run -h" for flags.
@@ -93,6 +101,7 @@ func run(args []string) error {
 	jsonPath := fs.String("json", "", "write the findings JSON to a file")
 	stateDir := fs.String("state-dir", ".review-state", "tracking state directory")
 	dryRun := fs.Bool("dry-run", false, "use the fake provider and skip GitHub writes")
+	noBlock := fs.Bool("no-block", false, "do not fail the run on blocking findings")
 	comment := fs.Bool("comment", false, "post the summary as a PR comment")
 	publish := fs.Bool("publish", false, "archive findings to the bot branch")
 	providerName := fs.String("provider", "", "override provider name")
@@ -201,7 +210,7 @@ func run(args []string) error {
 		}
 	}
 
-	if len(res.Run.Blocking()) > 0 {
+	if !*noBlock && len(res.Run.Blocking()) > 0 {
 		return fmt.Errorf("%d blocking finding(s) at or above %s", len(res.Run.Blocking()), res.Run.BlockThreshold)
 	}
 	return nil
@@ -229,6 +238,78 @@ func defaultKeyEnv(cfg config.Config) string {
 		return cfg.Provider.APIKeyEnv
 	}
 	return "REVIEW_PROVIDER_API_KEY"
+}
+
+func issueReview(args []string) error {
+	fs := flag.NewFlagSet("issue", flag.ContinueOnError)
+	var c commonFlags
+	addCommon(fs, &c)
+	issueNum := fs.Int("issue", 0, "issue number to review")
+	stateDir := fs.String("state-dir", ".review-state", "tracking state directory")
+	outPath := fs.String("out", "", "write the Markdown summary to a file")
+	comment := fs.Bool("comment", false, "post the summary as an issue comment")
+	reopen := fs.Bool("reopen", false, "reopen a closed issue with unmet criteria")
+	block := fs.Bool("block", false, "exit non-zero when criteria are unmet")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *issueNum <= 0 {
+		return fmt.Errorf("--issue is required")
+	}
+	cfg, err := config.Load(c.configPath)
+	if err != nil {
+		return err
+	}
+	owner, name, err := splitRepo(c.repository)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	gh := vcs.NewGitHub("")
+	issue, err := gh.GetIssue(ctx, owner, name, *issueNum)
+	if err != nil {
+		return err
+	}
+
+	var st store.Store = store.NewJSON(*stateDir)
+	if cfg.Mode == config.ModeStateless {
+		st = store.Stateless{}
+	}
+	eng := engine.New(engine.Options{Config: cfg, Store: st})
+	res, err := eng.RunIssue(ctx, issue)
+	if err != nil {
+		return err
+	}
+
+	markdown := report.ReviewMarkdown(res.Run)
+	fmt.Print(markdown)
+	if *outPath != "" {
+		if err := os.WriteFile(*outPath, []byte(markdown), 0o644); err != nil {
+			return err
+		}
+	}
+
+	unmet := 0
+	for _, f := range res.Findings {
+		if f.Detector == "issue.criteria" && f.Anchor != "no-criteria" {
+			unmet++
+		}
+	}
+	if *comment {
+		if err := gh.Comment(ctx, owner, name, *issueNum, markdown); err != nil {
+			return err
+		}
+	}
+	if *reopen && unmet > 0 && strings.EqualFold(issue.State, "closed") {
+		if err := gh.SetIssueState(ctx, owner, name, *issueNum, "open"); err != nil {
+			return err
+		}
+		fmt.Printf("reopened issue #%d (%d unmet criteria)\n", *issueNum, unmet)
+	}
+	if *block && unmet > 0 {
+		return fmt.Errorf("issue #%d has %d unmet acceptance criteria", *issueNum, unmet)
+	}
+	return nil
 }
 
 func plan(args []string) error {

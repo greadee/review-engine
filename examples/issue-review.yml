@@ -1,0 +1,31 @@
+# Example: issue review with closure gating.
+# Runs when an issue is closed, reviews it against its acceptance criteria, and
+# comments. Auto-reopen is opt-in via `reopen: "true"`.
+#
+# Defaults: comment-only. Set `block: "true"` to fail the step on unmet criteria
+# (useful as a required check when a PR declares `Closes #n`), and
+# `reopen: "true"` to reopen a closed issue with unmet criteria.
+
+name: Issue review
+
+on:
+  issues:
+    types: [closed]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  issue-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: greadee/review-engine@v1
+        with:
+          profile: issue
+          issue: ${{ github.event.issue.number }}
+          comment: "true"
+          reopen: "false"   # set true to auto-reopen when criteria are unmet
+          block: "false"
+          api-key: ${{ secrets.REVIEW_PROVIDER_API_KEY }}

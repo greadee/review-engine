@@ -39,14 +39,26 @@ inputs:
     description: "Pull request number (when the event is a PR)"
     required: false
     default: ""
+  issue:
+    description: "Issue number (for the issue profile)"
+    required: false
+    default: ""
   publish:
     description: "Archive findings to the bot branch"
     required: false
     default: "true"
   comment:
-    description: "Post the summary as a PR comment"
+    description: "Post the summary as a PR or issue comment"
     required: false
     default: "true"
+  block:
+    description: "Fail the step when blocking findings (or unmet criteria) exist"
+    required: false
+    default: "true"
+  reopen:
+    description: "Reopen a closed issue with unmet criteria (issue profile)"
+    required: false
+    default: "false"
   archive-branch:
     description: "Bot branch for archived findings"
     required: false
@@ -91,21 +103,29 @@ runs:
         REVIEW_BLOCK_THRESHOLD: ${{ inputs.block-threshold }}
       run: |
         set -euo pipefail
-        printf '%s\n' "Revu CLI built from ${{ github.action_path }}"
-        args=(run
-          --config "${{ inputs.config }}"
-          --profile "${{ inputs.profile }}"
-          --base "${{ inputs.base }}"
-          --head "${{ inputs.head }}"
-          --repository "${{ inputs.repository }}"
-          --out summary.md
-          --json findings.json)
-        [ -n "${{ inputs.pr }}" ] && args+=(--pr "${{ inputs.pr }}")
-        [ "${{ inputs.publish }}" = "true" ] && args+=(--publish)
-        [ "${{ inputs.comment }}" = "true" ] && args+=(--comment)
-        set +e
-        "$RUNNER_TEMP/revu" "${args[@]}"
-        code=$?
-        set -e
         echo "summary=summary.md" >> "$GITHUB_OUTPUT"
-        exit $code
+        if [ "${{ inputs.profile }}" = "issue" ]; then
+          args=(issue
+            --config "${{ inputs.config }}"
+            --repository "${{ inputs.repository }}"
+            --issue "${{ inputs.issue }}"
+            --out summary.md)
+          [ "${{ inputs.comment }}" = "true" ] && args+=(--comment)
+          [ "${{ inputs.reopen }}" = "true" ] && args+=(--reopen)
+          [ "${{ inputs.block }}" = "true" ] && args+=(--block)
+          "$RUNNER_TEMP/revu" "${args[@]}"
+        else
+          args=(run
+            --config "${{ inputs.config }}"
+            --profile "${{ inputs.profile }}"
+            --base "${{ inputs.base }}"
+            --head "${{ inputs.head }}"
+            --repository "${{ inputs.repository }}"
+            --out summary.md
+            --json findings.json)
+          [ -n "${{ inputs.pr }}" ] && args+=(--pr "${{ inputs.pr }}")
+          [ "${{ inputs.publish }}" = "true" ] && args+=(--publish)
+          [ "${{ inputs.comment }}" = "true" ] && args+=(--comment)
+          [ "${{ inputs.block }}" = "true" ] || args+=(--no-block)
+          "$RUNNER_TEMP/revu" "${args[@]}"
+        fi

@@ -89,7 +89,10 @@ func (e *Engine) RunRange(ctx context.Context, profile, base, head, repository, 
 		}
 	}
 
-	if e.opts.Config.Review.Semantic && e.opts.Reviewer != nil && e.opts.Provider != nil {
+	if e.opts.Config.Review.Semantic {
+		if e.opts.Reviewer == nil || e.opts.Provider == nil {
+			return Result{}, fmt.Errorf("engine: semantic review is enabled but no provider is configured")
+		}
 		files := e.gather(head, sc.Files)
 		found, err := e.opts.Reviewer.Review(ctx, reviewers.Input{
 			Profile: profile,

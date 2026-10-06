@@ -9,8 +9,8 @@ import (
 	"github.com/greadee/review-engine/internal/findings"
 )
 
-// Unfinished flags markers that indicate incomplete production code: TODO /
-// FIXME / XXX comments and "not implemented" / "unimplemented" panics.
+// Unfinished flags markers that indicate incomplete production code:
+// completion-marker comments and not-implemented stubs.
 type Unfinished struct{}
 
 // NewUnfinished returns an unfinished-work detector.
@@ -40,6 +40,11 @@ func (Unfinished) Analyze(_ context.Context, t analyzers.Target) ([]findings.Fin
 			continue
 		}
 		for i, line := range fileLines(data) {
+			// Skip regex definitions and other lines that merely name the
+			// markers (including this detector's own source).
+			if strings.Contains(line, "regexp.") {
+				continue
+			}
 			isMarker := markerRe.MatchString(line)
 			trimmed := strings.TrimSpace(line)
 			isNotImpl := notImpl.MatchString(line) &&

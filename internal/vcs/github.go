@@ -60,6 +60,34 @@ func (c *GitHub) PR(ctx context.Context, owner, repo string, number int) (PullRe
 	return pr, nil
 }
 
+// Issue is the subset of issue metadata the engine uses.
+type Issue struct {
+	Number  int    `json:"number"`
+	Title   string `json:"title"`
+	Body    string `json:"body"`
+	State   string `json:"state"`
+	HTMLURL string `json:"html_url"`
+	Labels  []struct {
+		Name string `json:"name"`
+	} `json:"labels"`
+}
+
+// GetIssue fetches issue metadata.
+func (c *GitHub) GetIssue(ctx context.Context, owner, repo string, number int) (Issue, error) {
+	var issue Issue
+	path := fmt.Sprintf("/repos/%s/%s/issues/%d", owner, repo, number)
+	if err := c.do(ctx, http.MethodGet, path, nil, &issue); err != nil {
+		return Issue{}, err
+	}
+	return issue, nil
+}
+
+// SetIssueState opens or closes an issue.
+func (c *GitHub) SetIssueState(ctx context.Context, owner, repo string, number int, state string) error {
+	path := fmt.Sprintf("/repos/%s/%s/issues/%d", owner, repo, number)
+	return c.do(ctx, http.MethodPatch, path, map[string]string{"state": state}, nil)
+}
+
 // Comment posts a comment on an issue or pull request.
 func (c *GitHub) Comment(ctx context.Context, owner, repo string, number int, body string) error {
 	path := fmt.Sprintf("/repos/%s/%s/issues/%d/comments", owner, repo, number)

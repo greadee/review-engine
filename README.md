@@ -43,7 +43,22 @@ jobs:
 ```
 
 The action builds the engine, runs the selected profile, archives findings to the
-`review-artifacts` branch, and posts a summary comment on the PR.
+`review-artifacts` branch, and posts a summary comment on the PR. More examples:
+[`examples/review.yml`](examples/review.yml) and
+[`examples/issue-review.yml`](examples/issue-review.yml).
+
+## Issue review
+
+The `issue` profile extracts acceptance criteria (checkboxes, or list items under
+an acceptance/criteria heading) from an issue body and reports the ones that are
+not satisfied.
+
+- On an **open** issue, unmet criteria are P3 (work in progress).
+- On a **closed** issue, unmet criteria are P1 (the closure is unsupported).
+
+Closure gating is comment-only by default. `--block` fails the step when criteria
+are unmet (use as a required check), and `--reopen` reopens a closed issue with
+unmet criteria. Both are opt-in via `revu.yaml` / action inputs.
 
 > Fork PRs cannot access secrets. For untrusted forks, run the static/context job
 > without secrets and perform the model call and publishing in a separate
@@ -62,6 +77,9 @@ go build -o revu ./cmd/revu
 
 # Render a findings JSON file later
 ./revu report --in findings.json --audit
+
+# Review an issue against its acceptance criteria (comment-only by default)
+./revu issue --issue 42 --repository owner/name --comment
 ```
 
 Useful flags: `--dry-run` (fake provider, no GitHub writes), `--static=false`,
@@ -139,13 +157,14 @@ gofmt -l .
 
 ## Status
 
-Stages 0–2 of the sprint plan plus the Stage 5 specialized detectors: the engine runs
-the `pr` and `audit` profiles end-to-end with the Go static analyzer, the semantic
-pass, cross-run tracking with a delta section, archiving, and the orphan/wiring,
-stale-reference, fail-open, and unfinished detectors. The `issue`, `sprint`, and
-`impact` profiles are wired as configurations over the same pipeline; their dedicated
-extractors (acceptance-criteria mapping, closure gating) and the remaining
-fork-safe publishing workflow are the next stages. See [`sprint-plan.md`](sprint-plan.md).
+Stages 0–2 of the sprint plan, the Stage 5 specialized detectors, and Stage 4 issue
+review: the engine runs the `pr`, `audit`, and `issue` profiles end-to-end with the
+Go static analyzer, the semantic pass, cross-run tracking with a delta section,
+archiving, the orphan/wiring, stale-reference, fail-open, and unfinished detectors,
+and acceptance-criteria verification with closure gating. The `sprint` and `impact`
+profiles are wired as configurations over the same pipeline; the fully fork-safe
+two-job publishing workflow is the remaining hardening item. See
+[`sprint-plan.md`](sprint-plan.md).
 
 ## License
 
