@@ -25,7 +25,7 @@ func (*StaleReference) Name() string { return "stale-reference" }
 var (
 	backtickSpan = regexp.MustCompile("`([^`\n]+)`")
 	markdownLink = regexp.MustCompile(`\]\(([^)\s]+)\)`)
-	repoPath     = regexp.MustCompile(`^[\w][\w./-]*\.(go|md|json|ya?ml|ts|tsx|js|py|toml|schema|sql|css|html|sh)$`)
+	repoPath     = regexp.MustCompile(`^\.?[\w][\w./-]*\.(go|md|json|ya?ml|ts|tsx|js|py|toml|schema|sql|css|html|sh)$`)
 )
 
 type candidate struct {
@@ -100,7 +100,9 @@ func cleanRepoPath(s string) string {
 	if i := strings.IndexAny(s, "#?"); i >= 0 {
 		s = s[:i]
 	}
-	s = strings.TrimPrefix(s, ".")
+	// Strip only a leading "./" or "/"; a lone leading dot (e.g. ".github/")
+	// is part of the path.
+	s = strings.TrimPrefix(s, "./")
 	s = strings.TrimPrefix(s, "/")
 	if strings.Contains(s, "://") || strings.HasPrefix(s, "mailto:") || strings.ContainsAny(s, " <>|") {
 		return ""

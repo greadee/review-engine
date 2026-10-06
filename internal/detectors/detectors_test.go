@@ -73,6 +73,19 @@ func TestStaleReference(t *testing.T) {
 	}
 }
 
+func TestStaleReferenceDotdir(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, ".github/workflows/ci.yml", "name: ci\n")
+	write(t, dir, "docs/a.md", "See `.github/workflows/ci.yml` and `.github/workflows/missing.yml`.\n")
+	got := analyze(t, NewStaleReference(), analyzers.Target{Dir: dir, AllFiles: []string{"docs/a.md", ".github/workflows/ci.yml"}})
+	if len(got) != 1 {
+		t.Fatalf("expected only the missing dotdir ref, got %d: %+v", len(got), got)
+	}
+	if got[0].Anchor != "stale:.github/workflows/missing.yml" {
+		t.Fatalf("unexpected anchor %q", got[0].Anchor)
+	}
+}
+
 func TestFailOpen(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "s.go", "package s\n\nfunc (c checker) run() error {\n\tif c.policy != nil && !c.policy.Allowed() {\n\t\treturn err\n\t}\n\treturn nil\n}\n")
