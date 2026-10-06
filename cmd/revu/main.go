@@ -8,10 +8,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/greadee/review-engine/internal/bundle"
+	"github.com/greadee/review-engine/internal/ci"
 	"github.com/greadee/review-engine/internal/config"
 	"github.com/greadee/review-engine/internal/engine"
 	"github.com/greadee/review-engine/internal/profiles"
@@ -50,6 +52,10 @@ func main() {
 		}
 	case "init":
 		err = initConfig(os.Args[2:])
+	case "config":
+		err = showConfig(os.Args[2:])
+	case "doctor":
+		err = doctor(os.Args[2:])
 	case "version":
 		fmt.Println(version)
 	case "-h", "--help", "help":
@@ -77,6 +83,8 @@ Usage:
   revu report   [flags]   render a findings JSON file to Markdown
   revu providers          list registered model providers
   revu init               write a starter revu.yaml
+  revu config             print the effective configuration
+  revu doctor             check the environment and configuration
   revu version            print version
 
 Run "revu run -h" for flags.
@@ -84,23 +92,64 @@ Run "revu run -h" for flags.
 }
 
 type commonFlags struct {
-	configPath string
-	profile    string
-	repoDir    string
-	base       string
-	head       string
-	repository string
-	pr         int
+	configPath   string
+	globalConfig string
+	profile      string
+	repoDir      string
+	base         string
+	head         string
+	repository   string
+	pr           int
 }
 
 func addCommon(fs *flag.FlagSet, c *commonFlags) {
 	fs.StringVar(&c.configPath, "config", "revu.yaml", "path to revu.yaml")
+	fs.StringVar(&c.globalConfig, "global-config", "", "path to a global revu config (defaults to $REVIEW_GLOBAL_CONFIG or the user config dir)")
 	fs.StringVar(&c.profile, "profile", "", "review profile (pr|issue|sprint|audit|impact)")
 	fs.StringVar(&c.repoDir, "repo-dir", ".", "repository working directory")
-	fs.StringVar(&c.base, "base", "origin/main", "base revision")
-	fs.StringVar(&c.head, "head", "HEAD", "head revision")
-	fs.StringVar(&c.repository, "repository", "", "owner/name for publishing")
-	fs.IntVar(&c.pr, "pr", 0, "pull request number")
+	fs.StringVar(&c.base, "base", "", "base revision (default: CI, else origin/main)")
+	fs.StringVar(&c.head, "head", "", "head revision (default: CI, else HEAD)")
+	fs.StringVar(&c.repository, "repository", "", "owner/name for publishing (default: CI)")
+	fs.IntVar(&c.pr, "pr", 0, "pull request number (default: CI)")
+}
+
+// loadConfig loads configuration, honouring an explicit global config path.
+func loadConfig(c commonFlags) (config.Config, error) {
+	if c.globalConfig != "" {
+		_ = os.Setenv("REVIEW_GLOBAL_CONFIG", c.globalConfig)
+	}
+	return config.Load(c.configPath)
+}
+
+// resolveCI fills empty revision flags from the CI environment.
+func resolveCI(c *commonFlags) ci.Info {
+	info := ci.Detect()
+	if c.base == "" {
+		if info.Base != "" {
+			c.base = info.Base
+		} else {
+			c.base = "origin/main"
+		}
+	}
+	if c.head == "" {
+		if info.Head != "" {
+			c.head = info.Head
+		} else {
+			c.head = "HEAD"
+		}
+	}
+	if c.repository == "" {
+		c.repository = info.Repository
+	}
+	if c.pr == 0 {
+		c.pr = info.PR
+	}
+	return info
+}
+
+// newStore selects the tracking backend from configuration.
+func newStore(cfg config.Config, stateDir string) (store.Store, func() error, error) {
+	return store.Open(cfg.Store.SQLite, stateDir, cfg.Store.SQLitePath(stateDir))
 }
 
 func run(args []string) error {
@@ -119,8 +168,9 @@ func run(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	resolveCI(&c)
 
-	cfg, err := config.Load(c.configPath)
+	cfg, err := loadConfig(c)
 	if err != nil {
 		return err
 	}
@@ -131,6 +181,7 @@ func run(args []string) error {
 		return fmt.Errorf("unknown profile %q (known: %s)", c.profile, strings.Join(profiles.All(), ", "))
 	}
 	cfg.Profile = c.profile
+	cfg.ApplyProfile(c.profile)
 	if *providerName != "" {
 		cfg.Provider.Name = *providerName
 	}
@@ -157,7 +208,12 @@ func run(args []string) error {
 	if cfg.Mode == config.ModeStateless {
 		st = store.Stateless{}
 	} else {
-		st = store.NewJSON(*stateDir)
+		opened, closeStore, err := newStore(cfg, *stateDir)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = closeStore() }()
+		st = opened
 	}
 
 	eng := engine.New(engine.Options{
@@ -258,7 +314,8 @@ func collectCmd(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cfg, err := config.Load(c.configPath)
+	resolveCI(&c)
+	cfg, err := loadConfig(c)
 	if err != nil {
 		return err
 	}
@@ -267,6 +324,10 @@ func collectCmd(args []string) error {
 	}
 	if !profiles.Valid(c.profile) {
 		return fmt.Errorf("unknown profile %q", c.profile)
+	}
+	cfg.ApplyProfile(c.profile)
+	if len(cfg.Review.Rubric) == 0 {
+		cfg.Review.Rubric = profiles.Rubric(c.profile)
 	}
 	repo, err := vcs.Open(c.repoDir)
 	if err != nil {
@@ -302,7 +363,8 @@ func finalizeCmd(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cfg, err := config.Load(c.configPath)
+	resolveCI(&c)
+	cfg, err := loadConfig(c)
 	if err != nil {
 		return err
 	}
@@ -316,16 +378,27 @@ func finalizeCmd(args []string) error {
 	if err != nil {
 		return err
 	}
+	cfg.ApplyProfile(b.Profile)
 	if len(cfg.Review.Rubric) == 0 {
 		cfg.Review.Rubric = b.Rubric
+	}
+	if len(cfg.Review.Rubric) == 0 {
+		cfg.Review.Rubric = profiles.Rubric(b.Profile)
 	}
 	prov, err := buildProvider(cfg, *dryRun)
 	if err != nil {
 		return err
 	}
-	var st store.Store = store.NewJSON(*stateDir)
+	var st store.Store
 	if cfg.Mode == config.ModeStateless {
 		st = store.Stateless{}
+	} else {
+		opened, closeStore, err := newStore(cfg, *stateDir)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = closeStore() }()
+		st = opened
 	}
 	eng := engine.New(engine.Options{
 		Config:   cfg,
@@ -407,13 +480,15 @@ func issueReview(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	resolveCI(&c)
 	if *issueNum <= 0 {
 		return fmt.Errorf("--issue is required")
 	}
-	cfg, err := config.Load(c.configPath)
+	cfg, err := loadConfig(c)
 	if err != nil {
 		return err
 	}
+	cfg.ApplyProfile(profiles.Issue)
 	owner, name, err := splitRepo(c.repository)
 	if err != nil {
 		return err
@@ -425,9 +500,16 @@ func issueReview(args []string) error {
 		return err
 	}
 
-	var st store.Store = store.NewJSON(*stateDir)
+	var st store.Store
 	if cfg.Mode == config.ModeStateless {
 		st = store.Stateless{}
+	} else {
+		opened, closeStore, err := newStore(cfg, *stateDir)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = closeStore() }()
+		st = opened
 	}
 	eng := engine.New(engine.Options{Config: cfg, Store: st})
 	res, err := eng.RunIssue(ctx, issue)
@@ -473,13 +555,15 @@ func plan(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cfg, err := config.Load(c.configPath)
+	resolveCI(&c)
+	cfg, err := loadConfig(c)
 	if err != nil {
 		return err
 	}
 	if c.profile == "" {
 		c.profile = cfg.Profile
 	}
+	cfg.ApplyProfile(c.profile)
 	repo, err := vcs.Open(c.repoDir)
 	if err != nil {
 		return err
@@ -569,6 +653,12 @@ archive:
   branch: review-artifacts
   dir: runs
 
+store:
+  sqlite: false
+  path: ""
+
+profiles: {}
+
 issueReview:
   commentOnly: true
   autoReopen: false
@@ -577,6 +667,105 @@ issueReview:
 ignore:
   - "vendor/**"
 `
+
+func showConfig(args []string) error {
+	fs := flag.NewFlagSet("config", flag.ContinueOnError)
+	var c commonFlags
+	addCommon(fs, &c)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := loadConfig(c)
+	if err != nil {
+		return err
+	}
+	if c.profile != "" {
+		cfg.ApplyProfile(c.profile)
+	}
+	data, err := config.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	fmt.Print(string(data))
+	return nil
+}
+
+func doctor(args []string) error {
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	var c commonFlags
+	addCommon(fs, &c)
+	stateDir := fs.String("state-dir", ".review-state", "tracking state directory")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	info := resolveCI(&c)
+	cfg, err := loadConfig(c)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("revu doctor")
+	fmt.Printf("  global config: %s\n", config.GlobalPath())
+	fmt.Printf("  local config:  %s\n", c.configPath)
+	fmt.Printf("  profile:       %s\n", firstNonEmpty(c.profile, cfg.Profile))
+	fmt.Printf("  mode:          %s\n", cfg.Mode)
+
+	tools := []struct {
+		name     string
+		optional bool
+	}{
+		{"git", false}, {"go", false}, {"gofmt", false},
+		{"ruff", true}, {"python3", true}, {"tsc", true},
+	}
+	for _, t := range tools {
+		if _, err := exec.LookPath(t.name); err == nil {
+			okf("tool %s", t.name)
+		} else if t.optional {
+			fmt.Printf("  [skip] tool %s not found (optional)\n", t.name)
+		} else {
+			warnf("tool %s not found", t.name)
+		}
+	}
+
+	if _, err := vcs.Open(c.repoDir); err == nil {
+		okf("git repository at %s (%s..%s)", c.repoDir, c.base, c.head)
+	} else {
+		warnf("git repository: %v", err)
+	}
+
+	if cfg.Review.Semantic {
+		if cfg.Provider.APIKey() != "" {
+			okf("provider API key via %s", defaultKeyEnv(cfg))
+		} else {
+			warnf("provider API key missing: set %s or use --dry-run", defaultKeyEnv(cfg))
+		}
+	} else {
+		okf("semantic review disabled (static only)")
+	}
+
+	if cfg.Store.SQLite {
+		okf("store: sqlite at %s", cfg.Store.SQLitePath(*stateDir))
+	} else {
+		okf("store: json at %s (sqlite is opt-in)", *stateDir)
+	}
+
+	if info.Detected {
+		okf("CI: %s repository=%s base=%s head=%s pr=%d", info.Provider, info.Repository, info.Base, info.Head, info.PR)
+	} else {
+		fmt.Println("  [skip] CI not detected")
+	}
+	return nil
+}
+
+func okf(format string, a ...any)   { fmt.Printf("  [ok]   "+format+"\n", a...) }
+func warnf(format string, a ...any) { fmt.Printf("  [warn] "+format+"\n", a...) }
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
 
 func splitRepo(s string) (string, string, error) {
 	parts := strings.SplitN(strings.TrimSpace(s), "/", 2)

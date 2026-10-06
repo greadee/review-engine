@@ -22,6 +22,22 @@ archive:
   branch: review-artifacts
   dir: runs
 
+store:
+  sqlite: false       # opt-in; JSON is the default backend
+  path: ""            # default: <state-dir>/review.db
+
+# Per-profile overrides so one config serves every review type. Combine with a
+# global config (REVIEW_GLOBAL_CONFIG or <user-config-dir>/revu/config.yaml) to
+# share defaults across many repositories.
+profiles:
+  audit:
+    blockThreshold: P2
+    ignore:
+      - "vendor/**"
+      - "**/*.md"
+  pr:
+    blockThreshold: P1
+
 issueReview:
   commentOnly: true  # default
   autoReopen: false

@@ -97,6 +97,10 @@ go build -o revu ./cmd/revu
 
 # Review an issue against its acceptance criteria (comment-only by default)
 ./revu issue --issue 42 --repository owner/name --comment
+
+# Inspect the effective configuration and the environment
+./revu config
+./revu doctor
 ```
 
 Useful flags: `--dry-run` (fake provider, no GitHub writes), `--static=false`,
@@ -118,6 +122,28 @@ Useful flags: `--dry-run` (fake provider, no GitHub writes), `--static=false`,
 See [`revu.example.yaml`](revu.example.yaml). All fields are optional. Environment
 variables (`REVIEW_PROFILE`, `REVIEW_MODEL`, `REVIEW_PROVIDER_API_KEY`, …) override
 the file, which is how the Action passes its inputs.
+
+### Multi-repo conveniences
+
+- **Config layering.** Built-in defaults are overlaid by an optional global config
+  (`REVIEW_GLOBAL_CONFIG`, else `<user-config-dir>/revu/config.yaml`), then the
+  repository's `revu.yaml`, then environment overrides. One global config can set
+  defaults shared by many repositories.
+- **Per-profile overrides.** A `profiles:` map lets a single file configure every
+  review type (rubric, ignore globs, block threshold, static/semantic, limits).
+- **CI auto-detection.** Base, head, repository, and PR number are inferred from
+  GitHub Actions (`GITHUB_*`) when not passed explicitly, so the same step works
+  in any repository. `revu doctor` shows what was detected.
+- **Backend selection.** `revu config` prints the effective configuration; the
+  tracking backend is chosen with `store.sqlite` (see below).
+
+### Tracking store
+
+Tracking is on by default and uses the JSON store at `--state-dir`
+(`.review-state`). Set `store.sqlite: true` (or `REVIEW_STORE_SQLITE=true`) to use
+the opt-in SQLite backend, which is pure-Go (no cgo) and stores at
+`<state-dir>/review.db` by default. Both backends implement the same interface and
+hold identical findings. See [`docs/adr/0006-optional-sqlite-store.md`](docs/adr/0006-optional-sqlite-store.md).
 
 ## Detectors
 
@@ -155,7 +181,8 @@ internal/
   detectors           orphan/wiring, stale-reference, fail-open, unfinished
   reviewers           semantic rubric pass
   findings            schema, fingerprint, lifecycle
-  store               JSON tracking store + stateless
+  store               JSON (default) or SQLite tracking store, + stateless
+  ci                  CI environment detection
   report              review + audit templates
   engine              pipeline orchestration
   profiles            built-in profile defaults
@@ -179,10 +206,10 @@ Stages 0–5: the engine runs the `pr`, `audit`, and `issue` profiles end-to-end
 the Go static analyzer, the semantic pass, cross-run tracking with a delta section,
 archiving, the orphan/wiring, stale-reference, fail-open, and unfinished detectors,
 acceptance-criteria verification with closure gating, a fork-safe two-phase
-(`collect`/`finalize`) flow with a reusable workflow, and ecosystem detection for
-Go, Python, and TypeScript analyzers. See
-[`sprint-plan.md`](sprint-plan.md). Remaining: multi-repo conveniences and an
-optional SQLite store.
+(`collect`/`finalize`) flow with a reusable workflow, ecosystem detection for Go,
+Python, and TypeScript analyzers, multi-repo conveniences (config layering,
+per-profile overrides, CI auto-detection, `config`/`doctor`), and an optional
+SQLite tracking store. See [`sprint-plan.md`](sprint-plan.md).
 
 ## License
 

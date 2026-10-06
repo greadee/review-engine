@@ -8,6 +8,7 @@ summary.md
 findings.json
 bundle.json
 .review-state/
+*.db
 
 # Editor/OS
 .DS_Store
