@@ -94,6 +94,30 @@ func TestRunRangeTracksLifecycle(t *testing.T) {
 	}
 }
 
+func TestRunRangeResolvesVanishedFinding(t *testing.T) {
+	dir, base, head := setupRepo(t)
+	fake := &provider.Fake{Responses: []string{
+		`{"findings":[{"title":"bug","classification":"Bug","severity":"P1","file":"a.go","line":3,"anchor":"bug-x"}]}`,
+		`{"findings":[]}`,
+	}}
+	eng := newEngine(t, dir, fake, store.NewJSON(t.TempDir()))
+	ctx := context.Background()
+
+	if _, err := eng.RunRange(ctx, "pr", base, head, "o/r", "HEAD"); err != nil {
+		t.Fatal(err)
+	}
+	res, err := eng.RunRange(ctx, "pr", base, head, "o/r", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Findings) != 0 || len(res.Run.Resolved) != 1 {
+		t.Fatalf("expected 1 resolved, got findings=%d resolved=%d", len(res.Findings), len(res.Run.Resolved))
+	}
+	if res.Run.Delta().Resolved != 1 {
+		t.Fatalf("delta should count resolved: %+v", res.Run.Delta())
+	}
+}
+
 func TestRunRangeStateless(t *testing.T) {
 	dir, base, head := setupRepo(t)
 	fake := &provider.Fake{Responses: []string{`{"findings":[]}`}}

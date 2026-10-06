@@ -13,17 +13,43 @@ import (
 
 // Run is the rendered result of one engine run.
 type Run struct {
-	ID             string
-	Profile        string
-	Repository     string
-	Ref            string
-	Base           string
-	Head           string
-	Generated      time.Time
-	Findings       []findings.Finding
+	ID         string
+	Profile    string
+	Repository string
+	Ref        string
+	Base       string
+	Head       string
+	Generated  time.Time
+	Findings   []findings.Finding
+	// Resolved are findings tracked previously that are absent from this run.
+	Resolved       []findings.Finding
 	BlockThreshold findings.Severity
 	// ArchiveURL links to the persisted findings source files, when available.
 	ArchiveURL string
+}
+
+// Delta summarizes lifecycle movement between the previous run and this one.
+type Delta struct {
+	New       int
+	Ongoing   int
+	Resolved  int
+	Regressed int
+}
+
+// Delta counts findings by lifecycle status.
+func (r Run) Delta() Delta {
+	d := Delta{Resolved: len(r.Resolved)}
+	for _, f := range r.Findings {
+		switch f.Status {
+		case findings.StatusNew:
+			d.New++
+		case findings.StatusOngoing:
+			d.Ongoing++
+		case findings.StatusRegressed:
+			d.Regressed++
+		}
+	}
+	return d
 }
 
 // Counts returns findings per severity.
@@ -97,6 +123,8 @@ func ReviewMarkdown(r Run) string {
 	b.WriteString("\n### Validation\n\n")
 	fmt.Fprintf(&b, "- findings: %s\n", countsString(r.Counts()))
 	fmt.Fprintf(&b, "- block threshold: %s\n", r.BlockThreshold)
+	d := r.Delta()
+	fmt.Fprintf(&b, "- delta: new=%d ongoing=%d regressed=%d resolved=%d\n", d.New, d.Ongoing, d.Regressed, d.Resolved)
 
 	fmt.Fprintf(&b, "\n### Risk\n\n%s\n", r.Risk())
 	fmt.Fprintf(&b, "\n### Recommendation\n\n%s\n", r.Recommendation())
@@ -120,6 +148,8 @@ func AuditMarkdown(r Run) string {
 	writeFindings(&b, r.Blocking())
 	b.WriteString("\n### Deferred\n\n")
 	writeFindings(&b, r.NonBlocking())
+	d := r.Delta()
+	fmt.Fprintf(&b, "\n### Delta\n\nnew=%d ongoing=%d regressed=%d resolved=%d\n", d.New, d.Ongoing, d.Regressed, d.Resolved)
 	b.WriteString("\n### Areas Reviewed\n\n")
 	fmt.Fprintf(&b, "- profile: %s\n\n", r.Profile)
 	b.WriteString("### Result\n\n")
