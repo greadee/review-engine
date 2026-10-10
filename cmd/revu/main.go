@@ -55,6 +55,8 @@ func main() {
 		err = initConfig(os.Args[2:])
 	case "config":
 		err = showConfig(os.Args[2:])
+	case "file-issues":
+		err = fileIssues(os.Args[2:])
 	case "doctor":
 		err = doctor(os.Args[2:])
 	case "version":
@@ -86,6 +88,7 @@ Usage:
   revu init               write a starter revu.yaml
   revu config             print the effective configuration
   revu doctor             check the environment and configuration
+  revu file-issues        create GitHub issues from a findings file
   revu version            print version
 
 Run "revu run -h" for flags.
@@ -284,7 +287,7 @@ func run(args []string) error {
 }
 
 func buildProvider(cfg config.Config, dryRun bool) (provider.Provider, error) {
-	if dryRun {
+	if dryRun || !cfg.Review.Semantic {
 		return &provider.Fake{Responses: []string{`{"findings":[]}`}}, nil
 	}
 	if cfg.Provider.Name == "fake" {
@@ -682,6 +685,62 @@ issueReview:
 ignore:
   - "vendor/**"
 `
+
+func fileIssues(args []string) error {
+	fs := flag.NewFlagSet("file-issues", flag.ContinueOnError)
+	var c commonFlags
+	addCommon(fs, &c)
+	in := fs.String("in", "findings.json", "findings JSON file")
+	group := fs.String("group", "detector", "grouping: detector|file|severity")
+	label := fs.String("label", "", "extra label to apply (in addition to revu and severity)")
+	max := fs.Int("max", 10, "maximum number of issues to create")
+	dryRun := fs.Bool("dry-run", false, "print the issues without creating them")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	resolveCI(&c)
+	data, err := os.ReadFile(*in)
+	if err != nil {
+		return err
+	}
+	var r report.Run
+	if err := json.Unmarshal(data, &r); err != nil {
+		return err
+	}
+	groups := report.GroupFindings(r.Findings, *group)
+	if *max > 0 && len(groups) > *max {
+		groups = groups[:*max]
+	}
+	owner, name, err := splitRepo(c.repository)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	gh := vcs.NewGitHub("")
+	created := 0
+	for _, g := range groups {
+		labels := g.Labels
+		if *label != "" {
+			labels = append([]string{*label}, labels...)
+		}
+		if *dryRun {
+			fmt.Printf("[dry-run] %s (labels=%v, %d findings)\n", g.Title, labels, len(g.Findings))
+			continue
+		}
+		num, err := gh.CreateIssue(ctx, owner, name, g.Title, g.Body, labels)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("created issue #%d: %s\n", num, g.Title)
+		created++
+	}
+	if *dryRun {
+		fmt.Printf("%d group(s) would be filed\n", len(groups))
+	} else {
+		fmt.Printf("%d issue(s) created\n", created)
+	}
+	return nil
+}
 
 func showConfig(args []string) error {
 	fs := flag.NewFlagSet("config", flag.ContinueOnError)

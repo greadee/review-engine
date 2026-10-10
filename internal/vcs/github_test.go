@@ -9,6 +9,32 @@ import (
 	"testing"
 )
 
+func TestGitHubCreateIssue(t *testing.T) {
+	var gotTitle string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues" {
+			body, _ := io.ReadAll(r.Body)
+			var payload map[string]any
+			_ = json.Unmarshal(body, &payload)
+			gotTitle, _ = payload["title"].(string)
+			_, _ = w.Write([]byte(`{"number":123}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := NewGitHub("token")
+	c.BaseURL = srv.URL
+	num, err := c.CreateIssue(context.Background(), "o", "r", "[revu] orphan (2 finding(s))", "body", []string{"revu", "P2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if num != 123 || gotTitle != "[revu] orphan (2 finding(s))" {
+		t.Fatalf("unexpected: num=%d title=%q", num, gotTitle)
+	}
+}
+
 func TestGitHubCommentAndPublish(t *testing.T) {
 	var commented string
 	var branchCreated bool
