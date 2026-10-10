@@ -14,10 +14,11 @@ import (
 )
 
 // RunIssue reviews an issue's delivered work against its acceptance criteria.
-// It needs no repository working tree.
+// It needs no repository working tree, but when one is available it reads
+// acceptance criteria from the docs the issue references.
 func (e *Engine) RunIssue(ctx context.Context, issue vcs.Issue) (Result, error) {
 	set := findings.NewSet()
-	for _, f := range issues.Findings(issue) {
+	for _, f := range issues.FindingsWith(issue, e.issueDocReader()) {
 		set.Add(f)
 	}
 	runID := fmt.Sprintf("issue-%d@%s", issue.Number, issue.State)
@@ -45,4 +46,20 @@ func (e *Engine) RunIssue(ctx context.Context, issue vcs.Issue) (Result, error) 
 		},
 		Findings: cur,
 	}, nil
+}
+
+// issueDocReader reads referenced Markdown docs from the working tree, when a
+// repository is available, so acceptance criteria kept in docs are honored.
+func (e *Engine) issueDocReader() issues.DocReader {
+	if e.opts.Repo == nil {
+		return nil
+	}
+	repo := e.opts.Repo
+	return func(p string) (string, bool) {
+		data, err := repo.File("", p)
+		if err != nil {
+			return "", false
+		}
+		return string(data), true
+	}
 }

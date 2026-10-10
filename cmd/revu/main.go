@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -55,8 +56,10 @@ func main() {
 		err = initConfig(os.Args[2:])
 	case "config":
 		err = showConfig(os.Args[2:])
-	case "file-issues":
-		err = fileIssues(os.Args[2:])
+	case "file-issue":
+		err = fileIssue(os.Args[2:])
+	case "reconcile":
+		err = reconcile(os.Args[2:])
 	case "doctor":
 		err = doctor(os.Args[2:])
 	case "version":
@@ -88,7 +91,8 @@ Usage:
   revu init               write a starter revu.yaml
   revu config             print the effective configuration
   revu doctor             check the environment and configuration
-  revu file-issues        create GitHub issues from a findings file
+  revu file-issue         create one findings issue from a findings file
+  revu reconcile          review issues and close/keep-open via their criteria
   revu version            print version
 
 Run "revu run -h" for flags.
@@ -518,7 +522,18 @@ func issueReview(args []string) error {
 		defer func() { _ = closeStore() }()
 		st = opened
 	}
-	eng := engine.New(engine.Options{Config: cfg, Store: st})
+	repo, _ := vcs.Open(c.repoDir) // best-effort: used to read linked criteria docs
+	var reader issues.DocReader
+	if repo != nil {
+		reader = func(p string) (string, bool) {
+			data, err := repo.File("", p)
+			if err != nil {
+				return "", false
+			}
+			return string(data), true
+		}
+	}
+	eng := engine.New(engine.Options{Config: cfg, Repo: repo, Store: st})
 	res, err := eng.RunIssue(ctx, issue)
 	if err != nil {
 		return err
@@ -532,7 +547,7 @@ func issueReview(args []string) error {
 		}
 	}
 
-	verdict := issues.Evaluate(issue)
+	verdict := issues.EvaluateWith(issue, reader)
 	closed := strings.EqualFold(issue.State, "closed")
 	if *comment {
 		if err := gh.Comment(ctx, owner, name, *issueNum, markdown); err != nil {
@@ -686,15 +701,17 @@ ignore:
   - "vendor/**"
 `
 
-func fileIssues(args []string) error {
-	fs := flag.NewFlagSet("file-issues", flag.ContinueOnError)
+// fileIssue creates a single consolidated findings issue. Review output is one
+// issue, never a burst of issues.
+func fileIssue(args []string) error {
+	fs := flag.NewFlagSet("file-issue", flag.ContinueOnError)
 	var c commonFlags
 	addCommon(fs, &c)
 	in := fs.String("in", "findings.json", "findings JSON file")
-	group := fs.String("group", "detector", "grouping: detector|file|severity")
-	label := fs.String("label", "", "extra label to apply (in addition to revu and severity)")
-	max := fs.Int("max", 10, "maximum number of issues to create")
-	dryRun := fs.Bool("dry-run", false, "print the issues without creating them")
+	title := fs.String("title", "", "issue title (default derived from the run)")
+	group := fs.String("group", "detector", "how to section the body: detector|file|severity")
+	label := fs.String("label", "", "extra label to apply")
+	dryRun := fs.Bool("dry-run", false, "print the issue without creating it")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -707,39 +724,160 @@ func fileIssues(args []string) error {
 	if err := json.Unmarshal(data, &r); err != nil {
 		return err
 	}
-	groups := report.GroupFindings(r.Findings, *group)
-	if *max > 0 && len(groups) > *max {
-		groups = groups[:*max]
+	if len(r.Findings) == 0 {
+		fmt.Println("no findings; no issue filed")
+		return nil
+	}
+	issueTitle := *title
+	if issueTitle == "" {
+		issueTitle = fmt.Sprintf("[revu] %s review findings (%d)", firstNonEmpty(r.Profile, "review"), len(r.Findings))
+	}
+	body := report.ConsolidatedBody(r, *group)
+	labels := []string{"revu"}
+	if *label != "" {
+		labels = append(labels, *label)
+	}
+
+	if *dryRun {
+		fmt.Printf("# %s\nlabels=%v\n\n%s\n", issueTitle, labels, body)
+		return nil
 	}
 	owner, name, err := splitRepo(c.repository)
 	if err != nil {
 		return err
 	}
+	num, err := vcs.NewGitHub("").CreateIssue(context.Background(), owner, name, issueTitle, body, labels)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("created issue #%d: %s\n", num, issueTitle)
+	return nil
+}
+
+// reconcile reviews a set of issues against their acceptance criteria: it
+// closes the ones that are good to go, keeps the rest open, and comments on the
+// remaining ones.
+func reconcile(args []string) error {
+	fs := flag.NewFlagSet("reconcile", flag.ContinueOnError)
+	var c commonFlags
+	addCommon(fs, &c)
+	numbers := fs.String("issues", "", "comma-separated issue numbers")
+	comment := fs.Bool("comment", false, "comment on issues that remain open")
+	closeGTG := fs.Bool("close", false, "close issues whose criteria are all met")
+	block := fs.Bool("block", false, "exit non-zero when any issue is not good to go")
+	dryRun := fs.Bool("dry-run", false, "print the actions without changing issues")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	resolveCI(&c)
+	cfg, err := loadConfig(c)
+	if err != nil {
+		return err
+	}
+	cfg.ApplyProfile(profiles.Issue)
+	doClose := *closeGTG || cfg.IssueReview.AutoClose
+	nums, err := parseNumbers(*numbers)
+	if err != nil {
+		return err
+	}
+	if len(nums) == 0 {
+		return fmt.Errorf("--issues is required (e.g. --issues 23,24)")
+	}
+	owner, name, err := splitRepo(c.repository)
+	if err != nil {
+		return err
+	}
+
+	var reader issues.DocReader
+	if repo, err := vcs.Open(c.repoDir); err == nil {
+		reader = func(p string) (string, bool) {
+			data, err := repo.File("", p)
+			if err != nil {
+				return "", false
+			}
+			return string(data), true
+		}
+	}
+
 	ctx := context.Background()
 	gh := vcs.NewGitHub("")
-	created := 0
-	for _, g := range groups {
-		labels := g.Labels
-		if *label != "" {
-			labels = append([]string{*label}, labels...)
-		}
-		if *dryRun {
-			fmt.Printf("[dry-run] %s (labels=%v, %d findings)\n", g.Title, labels, len(g.Findings))
-			continue
-		}
-		num, err := gh.CreateIssue(ctx, owner, name, g.Title, g.Body, labels)
+	var closedN, openN int
+	for _, n := range nums {
+		issue, err := gh.GetIssue(ctx, owner, name, n)
 		if err != nil {
-			return err
+			return fmt.Errorf("issue #%d: %w", n, err)
 		}
-		fmt.Printf("created issue #%d: %s\n", num, g.Title)
-		created++
+		verdict := issues.EvaluateWith(issue, reader)
+		isClosed := strings.EqualFold(issue.State, "closed")
+		switch {
+		case verdict.GoodToGo() && doClose && !isClosed:
+			if !*dryRun {
+				if err := gh.SetIssueState(ctx, owner, name, n, "closed"); err != nil {
+					return err
+				}
+			}
+			fmt.Printf("#%d closed (%d/%d criteria met)\n", n, verdict.Met, verdict.Criteria)
+			closedN++
+		case verdict.GoodToGo():
+			fmt.Printf("#%d good to go (%d/%d criteria met)\n", n, verdict.Met, verdict.Criteria)
+			openN++
+		default:
+			reason := fmt.Sprintf("%d/%d criteria met", verdict.Met, verdict.Criteria)
+			if !verdict.HasCriteria {
+				reason = "no acceptance criteria found"
+			}
+			fmt.Printf("#%d kept open (%s)\n", n, reason)
+			openN++
+			if *comment && !*dryRun {
+				body := reconcileComment(issue, verdict, reader)
+				if err := gh.Comment(ctx, owner, name, n, body); err != nil {
+					return err
+				}
+			}
+		}
 	}
-	if *dryRun {
-		fmt.Printf("%d group(s) would be filed\n", len(groups))
-	} else {
-		fmt.Printf("%d issue(s) created\n", created)
+	fmt.Printf("reconciled %d issue(s): %d closed, %d open\n", len(nums), closedN, openN)
+	if *block {
+		if openN > 0 {
+			return fmt.Errorf("%d issue(s) are not good to go", openN)
+		}
 	}
 	return nil
+}
+
+func reconcileComment(issue vcs.Issue, v issues.Verdict, read issues.DocReader) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "**Review update** for #%d\n\n", issue.Number)
+	if !v.HasCriteria {
+		b.WriteString("No acceptance criteria were found in the issue or its referenced docs.\n")
+		return b.String()
+	}
+	fmt.Fprintf(&b, "Acceptance criteria: %d/%d met.\n\n", v.Met, v.Criteria)
+	unmet := issues.Unmet(issue, read)
+	if len(unmet) > 0 {
+		b.WriteString("Outstanding:\n")
+		for _, c := range unmet {
+			fmt.Fprintf(&b, "- [ ] %s\n", c.Text)
+		}
+	}
+	b.WriteString("\n_Automated by review-engine._\n")
+	return b.String()
+}
+
+func parseNumbers(s string) ([]int, error) {
+	var out []int
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		n, err := strconv.Atoi(part)
+		if err != nil {
+			return nil, fmt.Errorf("invalid issue number %q", part)
+		}
+		out = append(out, n)
+	}
+	return out, nil
 }
 
 func showConfig(args []string) error {

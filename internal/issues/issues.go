@@ -19,10 +19,67 @@ type Criterion struct {
 }
 
 var (
-	criteriaHeading = regexp.MustCompile(`(?i)acceptance|criteria|requirement|definition of done|checklist`)
+	criteriaHeading = regexp.MustCompile(`(?i)\b(acceptance criteria|acceptance|criteria|definition of done|checklist)\b`)
 	checkbox        = regexp.MustCompile(`^[-*]\s*\[([ xX])\]\s*(.+)$`)
 	listItem        = regexp.MustCompile(`^(?:[-*]|\d+\.)\s+(.+)$`)
+	docRef          = regexp.MustCompile("`([^`\\n]+\\.md)`")
+	markdownDocLink = regexp.MustCompile(`\]\(([^)\s]+\.md)\)`)
 )
+
+// DocReader returns the contents of a repository-relative Markdown path. It is
+// used to pull acceptance criteria from docs an issue body references.
+type DocReader func(path string) (string, bool)
+
+// ReferencedDocs returns the repository-relative Markdown paths an issue body
+// points at (backticked paths and Markdown links).
+func ReferencedDocs(body string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(p string) {
+		p = strings.TrimSpace(p)
+		p = strings.TrimPrefix(p, "./")
+		if p == "" || strings.Contains(p, "://") || seen[p] {
+			return
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	for _, m := range docRef.FindAllStringSubmatch(body, -1) {
+		add(m[1])
+	}
+	for _, m := range markdownDocLink.FindAllStringSubmatch(body, -1) {
+		add(m[1])
+	}
+	return out
+}
+
+// CollectCriteria merges criteria found in the issue body with criteria found
+// in the docs it references, so an issue whose checklist lives in a doc is
+// evaluated correctly.
+func CollectCriteria(body string, read DocReader) []Criterion {
+	merged := Extract(body)
+	seen := map[string]bool{}
+	for _, c := range merged {
+		seen[strings.ToLower(c.Text)] = true
+	}
+	if read != nil {
+		for _, p := range ReferencedDocs(body) {
+			content, ok := read(p)
+			if !ok {
+				continue
+			}
+			for _, c := range Extract(content) {
+				key := strings.ToLower(c.Text)
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				merged = append(merged, c)
+			}
+		}
+	}
+	return merged
+}
 
 // Extract pulls acceptance criteria from a Markdown body: every checkbox,
 // plus list items that appear under an acceptance/criteria heading.
@@ -82,9 +139,10 @@ type Verdict struct {
 // it safe to close.
 func (v Verdict) GoodToGo() bool { return v.HasCriteria && v.Unmet == 0 }
 
-// Evaluate computes the verdict from an issue body.
-func Evaluate(issue vcs.Issue) Verdict {
-	criteria := Extract(issue.Body)
+// EvaluateWith computes the verdict from the issue body and any referenced
+// docs the reader can resolve (a nil reader uses the body only).
+func EvaluateWith(issue vcs.Issue, read DocReader) Verdict {
+	criteria := CollectCriteria(issue.Body, read)
 	v := Verdict{Criteria: len(criteria), HasCriteria: len(criteria) > 0}
 	for _, c := range criteria {
 		if c.Done {
@@ -96,10 +154,22 @@ func Evaluate(issue vcs.Issue) Verdict {
 	return v
 }
 
-// Findings evaluates an issue. Unmet criteria on a closed issue are P1 (the
-// closure is unsupported); on an open issue they are P3 (work in progress).
-func Findings(issue vcs.Issue) []findings.Finding {
-	criteria := Extract(issue.Body)
+// Unmet returns the outstanding criteria for an issue.
+func Unmet(issue vcs.Issue, read DocReader) []Criterion {
+	var out []Criterion
+	for _, c := range CollectCriteria(issue.Body, read) {
+		if !c.Done {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// FindingsWith evaluates an issue. Unmet criteria on a closed issue are P1 (the
+// closure is unsupported); on an open issue they are P3 (work in progress). A
+// nil reader restricts evaluation to the issue body.
+func FindingsWith(issue vcs.Issue, read DocReader) []findings.Finding {
+	criteria := CollectCriteria(issue.Body, read)
 	var out []findings.Finding
 	if len(criteria) == 0 {
 		out = append(out, findings.Finding{
