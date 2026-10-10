@@ -135,6 +135,42 @@ func ReviewMarkdown(r Run) string {
 	return b.String()
 }
 
+// SummaryMarkdown renders a concise comment suitable for a PR or issue: totals,
+// blocking findings, a few notable findings, risk, recommendation, and a link
+// to the full archived document. The full detail lives in the archived doc, not
+// the comment.
+func SummaryMarkdown(r Run) string {
+	var b strings.Builder
+	b.WriteString("## Review Summary\n\n")
+	fmt.Fprintf(&b, "_Profile `%s` · %d finding(s) · generated %s_\n\n", r.Profile, len(r.Findings), r.Generated.UTC().Format(time.RFC3339))
+	fmt.Fprintf(&b, "Severity: %s\n\n", countsString(r.Counts()))
+
+	b.WriteString("### Blocking\n\n")
+	writeFindingsBrief(&b, r.Blocking(), 10)
+	b.WriteString("\n### Notable\n\n")
+	writeFindingsBrief(&b, r.NonBlocking(), 8)
+	fmt.Fprintf(&b, "\n### Risk\n\n%s\n", r.Risk())
+	fmt.Fprintf(&b, "\n### Recommendation\n\n%s\n", r.Recommendation())
+	if r.ArchiveURL != "" {
+		fmt.Fprintf(&b, "\nFull findings: %s\n", r.ArchiveURL)
+	}
+	return b.String()
+}
+
+func writeFindingsBrief(b *strings.Builder, fs []findings.Finding, max int) {
+	if len(fs) == 0 {
+		b.WriteString("- None\n")
+		return
+	}
+	for i, f := range fs {
+		if i >= max {
+			fmt.Fprintf(b, "- _…and %d more_\n", len(fs)-max)
+			break
+		}
+		fmt.Fprintf(b, "- **[%s] %s** — `%s`\n", f.Severity, f.Title, loc(f))
+	}
+}
+
 // AuditMarkdown renders the repository-audit summary template.
 func AuditMarkdown(r Run) string {
 	var b strings.Builder

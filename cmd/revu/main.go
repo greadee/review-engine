@@ -273,10 +273,7 @@ func run(args []string) error {
 			fmt.Printf("\narchived findings: %s\n", url)
 		}
 		if *comment && c.pr > 0 {
-			body := report.ReviewMarkdown(res.Run)
-			if res.Run.ArchiveURL != "" {
-				body += fmt.Sprintf("\nFull findings: %s\n", res.Run.ArchiveURL)
-			}
+			body := report.SummaryMarkdown(res.Run)
 			if err := gh.Comment(context.Background(), owner, name, c.pr, body); err != nil {
 				return err
 			}
@@ -458,10 +455,7 @@ func finalizeCmd(args []string) error {
 			fmt.Printf("\narchived findings: %s\n", url)
 		}
 		if *comment && c.pr > 0 {
-			body := report.ReviewMarkdown(res.Run)
-			if res.Run.ArchiveURL != "" {
-				body += fmt.Sprintf("\nFull findings: %s\n", res.Run.ArchiveURL)
-			}
+			body := report.SummaryMarkdown(res.Run)
 			if err := gh.Comment(context.Background(), owner, name, c.pr, body); err != nil {
 				return err
 			}
@@ -550,7 +544,7 @@ func issueReview(args []string) error {
 	verdict := issues.EvaluateWith(issue, reader)
 	closed := strings.EqualFold(issue.State, "closed")
 	if *comment {
-		if err := gh.Comment(ctx, owner, name, *issueNum, markdown); err != nil {
+		if err := gh.Comment(ctx, owner, name, *issueNum, report.SummaryMarkdown(res.Run)); err != nil {
 			return err
 		}
 	}
@@ -617,6 +611,7 @@ func renderReport(args []string) error {
 	in := fs.String("in", "", "findings JSON file")
 	out := fs.String("out", "", "output Markdown file (default stdout)")
 	audit := fs.Bool("audit", false, "render the repository-audit template")
+	summary := fs.Bool("summary", false, "render the concise summary template")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -635,9 +630,12 @@ func renderReport(args []string) error {
 		r.Generated = time.Now().UTC()
 	}
 	var md string
-	if *audit {
+	switch {
+	case *audit:
 		md = report.AuditMarkdown(r)
-	} else {
+	case *summary:
+		md = report.SummaryMarkdown(r)
+	default:
 		md = report.ReviewMarkdown(r)
 	}
 	if *out != "" {

@@ -39,7 +39,7 @@ func (e *Engine) Publish(ctx context.Context, gh *vcs.GitHub, owner, repo string
 	if _, err := gh.PublishFiles(ctx, owner, repo, branch, files, message); err != nil {
 		return "", fmt.Errorf("engine: publish findings: %w", err)
 	}
-	return blobURL(gh.BaseURL, owner, repo, branch, base+".json"), nil
+	return blobURL(gh.BaseURL, owner, repo, branch, base+".md"), nil
 }
 
 func blobURL(apiBase, owner, repo, branch, file string) string {
