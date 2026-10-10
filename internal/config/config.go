@@ -97,6 +97,8 @@ type ArchiveConfig struct {
 
 // IssueReviewConfig controls issue-close gating.
 type IssueReviewConfig struct {
+	// AutoClose closes an issue when all acceptance criteria are met.
+	AutoClose   bool `yaml:"autoClose"`
 	AutoReopen  bool `yaml:"autoReopen"`
 	BlockMerge  bool `yaml:"blockMerge"`
 	CommentOnly bool `yaml:"commentOnly"`
@@ -264,6 +266,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("REVIEW_ISSUE_AUTO_REOPEN"); v != "" {
 		cfg.IssueReview.AutoReopen = parseBool(v, cfg.IssueReview.AutoReopen)
+	}
+	if v := os.Getenv("REVIEW_ISSUE_AUTO_CLOSE"); v != "" {
+		cfg.IssueReview.AutoClose = parseBool(v, cfg.IssueReview.AutoClose)
 	}
 	if v := os.Getenv("REVIEW_ISSUE_BLOCK_MERGE"); v != "" {
 		cfg.IssueReview.BlockMerge = parseBool(v, cfg.IssueReview.BlockMerge)

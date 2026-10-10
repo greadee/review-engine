@@ -67,6 +67,10 @@ inputs:
     description: "Reopen a closed issue with unmet criteria (issue profile)"
     required: false
     default: "false"
+  close:
+    description: "Close an open issue when every acceptance criterion is met (issue profile)"
+    required: false
+    default: "false"
   archive-branch:
     description: "Bot branch for archived findings"
     required: false
@@ -114,6 +118,8 @@ runs:
         REVIEW_ARCHIVE_BRANCH: ${{ inputs.archive-branch }}
         REVIEW_BLOCK_THRESHOLD: ${{ inputs.block-threshold }}
         REVIEW_STORE_SQLITE: ${{ inputs.store-sqlite }}
+        REVIEW_ISSUE_AUTO_CLOSE: ${{ inputs.close }}
+        REVIEW_ISSUE_AUTO_REOPEN: ${{ inputs.reopen }}
       run: |
         set -euo pipefail
         echo "summary=summary.md" >> "$GITHUB_OUTPUT"
@@ -153,6 +159,7 @@ runs:
             --out summary.md)
           [ "${{ inputs.comment }}" = "true" ] && args+=(--comment)
           [ "${{ inputs.reopen }}" = "true" ] && args+=(--reopen)
+          [ "${{ inputs.close }}" = "true" ] && args+=(--close)
           [ "${{ inputs.block }}" = "true" ] && args+=(--block)
           "$RUNNER_TEMP/revu" "${args[@]}"
           exit $?

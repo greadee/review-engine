@@ -2,9 +2,10 @@
 # Runs when an issue is closed, reviews it against its acceptance criteria, and
 # comments. Auto-reopen is opt-in via `reopen: "true"`.
 #
-# Defaults: comment-only. Set `block: "true"` to fail the step on unmet criteria
-# (useful as a required check when a PR declares `Closes #n`), and
-# `reopen: "true"` to reopen a closed issue with unmet criteria.
+# Defaults: comment-only. Set `close: "true"` to close an issue automatically
+# once every criterion is met, `reopen: "true"` to reopen a closed issue with
+# unmet criteria, and `block: "true"` to fail the step on unmet criteria (useful
+# as a required check when a PR declares `Closes #n`).
 
 name: Issue review
 
@@ -26,6 +27,7 @@ jobs:
           profile: issue
           issue: ${{ github.event.issue.number }}
           comment: "true"
+          close: "false"    # set true to close when all criteria are met
           reopen: "false"   # set true to auto-reopen when criteria are unmet
           block: "false"
           api-key: ${{ secrets.REVIEW_PROVIDER_API_KEY }}

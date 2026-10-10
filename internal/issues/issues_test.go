@@ -64,6 +64,26 @@ func TestFindingsOpenUnmetIsP3(t *testing.T) {
 	}
 }
 
+func TestEvaluate(t *testing.T) {
+	v := Evaluate(vcs.Issue{State: "open", Body: body})
+	if !v.HasCriteria || v.Criteria != 4 || v.Met != 2 || v.Unmet != 2 {
+		t.Fatalf("unexpected verdict: %+v", v)
+	}
+	if v.GoodToGo() {
+		t.Fatal("issue with unmet criteria must not be good-to-go")
+	}
+
+	gtg := Evaluate(vcs.Issue{State: "open", Body: "## Acceptance criteria\n\n- [x] done\n- [x] also done\n"})
+	if !gtg.GoodToGo() || gtg.Unmet != 0 {
+		t.Fatalf("expected good-to-go: %+v", gtg)
+	}
+
+	none := Evaluate(vcs.Issue{Body: "no list here"})
+	if none.HasCriteria || none.GoodToGo() {
+		t.Fatalf("no criteria must not be good-to-go: %+v", none)
+	}
+}
+
 func TestFindingsNoCriteria(t *testing.T) {
 	got := Findings(vcs.Issue{Number: 1, State: "closed", Body: "no list here"})
 	if len(got) != 1 || got[0].Anchor != "no-criteria" || got[0].Severity != findings.P3 {

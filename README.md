@@ -56,9 +56,16 @@ not satisfied.
 - On an **open** issue, unmet criteria are P3 (work in progress).
 - On a **closed** issue, unmet criteria are P1 (the closure is unsupported).
 
-Closure gating is comment-only by default. `--block` fails the step when criteria
-are unmet (use as a required check), and `--reopen` reopens a closed issue with
-unmet criteria. Both are opt-in via `revu.yaml` / action inputs.
+Closure gating is comment-only by default. Additional behavior is opt-in via
+`revu.yaml` (`issueReview.autoClose` / `autoReopen` / `blockMerge`) or flags:
+
+- `--close` closes an open issue once **every** criterion is met (good-to-go);
+  an issue with no criteria is never auto-closed.
+- `--reopen` reopens a closed issue that still has unmet criteria.
+- `--block` fails the step when criteria are unmet or absent (use as a required
+  check).
+
+Unmet criteria always leave the issue open.
 
 > Fork PRs cannot access secrets. For untrusted forks, run the collect phase
 > without secrets and finalize in a separate secret-bearing job. See

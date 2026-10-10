@@ -70,6 +70,32 @@ func Extract(body string) []Criterion {
 	return out
 }
 
+// Verdict summarizes an issue's acceptance-criteria status.
+type Verdict struct {
+	Criteria    int
+	Met         int
+	Unmet       int
+	HasCriteria bool
+}
+
+// GoodToGo reports whether the issue has criteria and all are satisfied, making
+// it safe to close.
+func (v Verdict) GoodToGo() bool { return v.HasCriteria && v.Unmet == 0 }
+
+// Evaluate computes the verdict from an issue body.
+func Evaluate(issue vcs.Issue) Verdict {
+	criteria := Extract(issue.Body)
+	v := Verdict{Criteria: len(criteria), HasCriteria: len(criteria) > 0}
+	for _, c := range criteria {
+		if c.Done {
+			v.Met++
+		} else {
+			v.Unmet++
+		}
+	}
+	return v
+}
+
 // Findings evaluates an issue. Unmet criteria on a closed issue are P1 (the
 // closure is unsupported); on an open issue they are P3 (work in progress).
 func Findings(issue vcs.Issue) []findings.Finding {

@@ -40,8 +40,9 @@ profiles:
 
 issueReview:
   commentOnly: true  # default
-  autoReopen: false
-  blockMerge: false
+  autoClose: false   # close an issue when every criterion is met
+  autoReopen: false  # reopen a closed issue that still has unmet criteria
+  blockMerge: false  # fail the check when criteria are unmet
 
 ignore:
   - "vendor/**"

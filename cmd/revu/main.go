@@ -16,6 +16,7 @@ import (
 	"github.com/greadee/review-engine/internal/ci"
 	"github.com/greadee/review-engine/internal/config"
 	"github.com/greadee/review-engine/internal/engine"
+	"github.com/greadee/review-engine/internal/issues"
 	"github.com/greadee/review-engine/internal/profiles"
 	"github.com/greadee/review-engine/internal/provider"
 	"github.com/greadee/review-engine/internal/report"
@@ -476,6 +477,7 @@ func issueReview(args []string) error {
 	outPath := fs.String("out", "", "write the Markdown summary to a file")
 	comment := fs.Bool("comment", false, "post the summary as an issue comment")
 	reopen := fs.Bool("reopen", false, "reopen a closed issue with unmet criteria")
+	closeIssue := fs.Bool("close", false, "close an open issue when every criterion is met")
 	block := fs.Bool("block", false, "exit non-zero when criteria are unmet")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -489,6 +491,8 @@ func issueReview(args []string) error {
 		return err
 	}
 	cfg.ApplyProfile(profiles.Issue)
+	doClose := *closeIssue || cfg.IssueReview.AutoClose
+	doReopen := *reopen || cfg.IssueReview.AutoReopen
 	owner, name, err := splitRepo(c.repository)
 	if err != nil {
 		return err
@@ -525,25 +529,35 @@ func issueReview(args []string) error {
 		}
 	}
 
-	unmet := 0
-	for _, f := range res.Findings {
-		if f.Detector == "issue.criteria" && f.Anchor != "no-criteria" {
-			unmet++
-		}
-	}
+	verdict := issues.Evaluate(issue)
+	closed := strings.EqualFold(issue.State, "closed")
 	if *comment {
 		if err := gh.Comment(ctx, owner, name, *issueNum, markdown); err != nil {
 			return err
 		}
 	}
-	if *reopen && unmet > 0 && strings.EqualFold(issue.State, "closed") {
-		if err := gh.SetIssueState(ctx, owner, name, *issueNum, "open"); err != nil {
+	// Good to go: close the issue when every criterion is met.
+	if verdict.GoodToGo() && doClose && !closed {
+		if err := gh.SetIssueState(ctx, owner, name, *issueNum, "closed"); err != nil {
 			return err
 		}
-		fmt.Printf("reopened issue #%d (%d unmet criteria)\n", *issueNum, unmet)
+		fmt.Printf("closed issue #%d (%d/%d criteria met)\n", *issueNum, verdict.Met, verdict.Criteria)
 	}
-	if *block && unmet > 0 {
-		return fmt.Errorf("issue #%d has %d unmet acceptance criteria", *issueNum, unmet)
+	// Not done: keep the issue open (reopening a closed one when configured).
+	if verdict.Unmet > 0 {
+		if doReopen && closed {
+			if err := gh.SetIssueState(ctx, owner, name, *issueNum, "open"); err != nil {
+				return err
+			}
+			fmt.Printf("reopened issue #%d (%d unmet criteria)\n", *issueNum, verdict.Unmet)
+		}
+	}
+	// Close gate: fail the run (e.g. as a required check) when work is unmet.
+	if *block && verdict.Unmet > 0 {
+		return fmt.Errorf("issue #%d has %d unmet acceptance criteria", *issueNum, verdict.Unmet)
+	}
+	if *block && !verdict.HasCriteria {
+		return fmt.Errorf("issue #%d has no acceptance criteria to verify", *issueNum)
 	}
 	return nil
 }
@@ -661,6 +675,7 @@ profiles: {}
 
 issueReview:
   commentOnly: true
+  autoClose: false
   autoReopen: false
   blockMerge: false
 
