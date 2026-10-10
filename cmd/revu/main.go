@@ -17,6 +17,7 @@ import (
 	"github.com/greadee/review-engine/internal/ci"
 	"github.com/greadee/review-engine/internal/config"
 	"github.com/greadee/review-engine/internal/engine"
+	"github.com/greadee/review-engine/internal/findings"
 	"github.com/greadee/review-engine/internal/issues"
 	"github.com/greadee/review-engine/internal/profiles"
 	"github.com/greadee/review-engine/internal/provider"
@@ -760,6 +761,7 @@ func reconcile(args []string) error {
 	var c commonFlags
 	addCommon(fs, &c)
 	numbers := fs.String("issues", "", "comma-separated issue numbers")
+	findingsPath := fs.String("findings", "", "findings JSON; hold open any issue with related findings")
 	comment := fs.Bool("comment", false, "comment on issues that remain open")
 	closeGTG := fs.Bool("close", false, "close issues whose criteria are all met")
 	block := fs.Bool("block", false, "exit non-zero when any issue is not good to go")
@@ -799,6 +801,20 @@ func reconcile(args []string) error {
 
 	ctx := context.Background()
 	gh := vcs.NewGitHub("")
+
+	var allFindings []findings.Finding
+	if *findingsPath != "" {
+		data, err := os.ReadFile(*findingsPath)
+		if err != nil {
+			return err
+		}
+		var fr report.Run
+		if err := json.Unmarshal(data, &fr); err != nil {
+			return err
+		}
+		allFindings = fr.Findings
+	}
+
 	var closedN, openN int
 	for _, n := range nums {
 		issue, err := gh.GetIssue(ctx, owner, name, n)
@@ -807,6 +823,28 @@ func reconcile(args []string) error {
 		}
 		verdict := issues.EvaluateWith(issue, reader)
 		isClosed := strings.EqualFold(issue.State, "closed")
+
+		// A findings-gated issue stays open when the review found problems in
+		// its area, even if its own checklist claims completion.
+		if related := issues.RelatedFindings(issue, reader, allFindings); len(related) > 0 {
+			if isClosed && !*dryRun {
+				if err := gh.SetIssueState(ctx, owner, name, n, "open"); err != nil {
+					return err
+				}
+				fmt.Printf("#%d reopened (%d related finding(s))\n", n, len(related))
+			} else {
+				fmt.Printf("#%d kept open (%d related finding(s))\n", n, len(related))
+			}
+			openN++
+			if *comment && !*dryRun {
+				body := relatedFindingsComment(issue, related)
+				if err := gh.Comment(ctx, owner, name, n, body); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+
 		switch {
 		case verdict.GoodToGo() && doClose && !isClosed:
 			if !*dryRun {
@@ -857,6 +895,26 @@ func reconcileComment(issue vcs.Issue, v issues.Verdict, read issues.DocReader) 
 		for _, c := range unmet {
 			fmt.Fprintf(&b, "- [ ] %s\n", c.Text)
 		}
+	}
+	b.WriteString("\n_Automated by review-engine._\n")
+	return b.String()
+}
+
+func relatedFindingsComment(issue vcs.Issue, related []findings.Finding) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "**Review update** for #%d\n\n", issue.Number)
+	fmt.Fprintf(&b, "The automated review found %d finding(s) in this issue's area, so it stays open pending fixes:\n\n", len(related))
+	const max = 15
+	for i, f := range related {
+		if i >= max {
+			fmt.Fprintf(&b, "- _…and %d more_\n", len(related)-max)
+			break
+		}
+		loc := f.Evidence.File
+		if f.Evidence.Line > 0 {
+			loc = fmt.Sprintf("%s:%d", loc, f.Evidence.Line)
+		}
+		fmt.Fprintf(&b, "- **[%s] %s** — `%s`\n", f.Severity, f.Title, loc)
 	}
 	b.WriteString("\n_Automated by review-engine._\n")
 	return b.String()

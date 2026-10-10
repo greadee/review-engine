@@ -165,6 +165,80 @@ func Unmet(issue vcs.Issue, read DocReader) []Criterion {
 	return out
 }
 
+var areaToken = regexp.MustCompile("`([a-zA-Z][\\w./-]*/[\\w./-]+)`")
+
+// Areas returns the module/directory prefixes an issue relates to, taken from
+// path-like tokens in its body and referenced docs.
+func Areas(issue vcs.Issue, read DocReader) []string {
+	texts := []string{issue.Body}
+	if read != nil {
+		for _, p := range ReferencedDocs(issue.Body) {
+			// Only the issue's own doc defines its areas; sprint plans and other
+			// docs reference too many modules.
+			if !strings.HasPrefix(p, "docs/issues/") {
+				continue
+			}
+			if content, ok := read(p); ok {
+				texts = append(texts, content)
+			}
+		}
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, text := range texts {
+		for _, m := range areaToken.FindAllStringSubmatch(text, -1) {
+			area := normalizeArea(m[1])
+			if !strings.Contains(area, "/") || strings.HasPrefix(area, "docs/") || seen[area] {
+				continue
+			}
+			seen[area] = true
+			out = append(out, area)
+		}
+	}
+	return out
+}
+
+// normalizeArea drops a trailing symbol (e.g. routing.Decide -> routing) or
+// file extension from the final path segment.
+func normalizeArea(tok string) string {
+	tok = strings.TrimPrefix(strings.TrimSpace(tok), "./")
+	parts := strings.Split(tok, "/")
+	last := parts[len(parts)-1]
+	if i := strings.Index(last, "."); i >= 0 {
+		last = last[:i]
+	}
+	parts[len(parts)-1] = last
+	if parts[len(parts)-1] == "" {
+		parts = parts[:len(parts)-1]
+	}
+	return strings.Join(parts, "/")
+}
+
+// RelatedFindings returns the findings that fall inside the issue's areas.
+func RelatedFindings(issue vcs.Issue, read DocReader, all []findings.Finding) []findings.Finding {
+	areas := Areas(issue, read)
+	if len(areas) == 0 {
+		return nil
+	}
+	var out []findings.Finding
+	for _, f := range all {
+		if fileInAreas(f.Evidence.File, areas) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func fileInAreas(file string, areas []string) bool {
+	file = strings.TrimPrefix(strings.TrimSpace(file), "./")
+	for _, a := range areas {
+		if file == a || strings.HasPrefix(file, a+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // FindingsWith evaluates an issue. Unmet criteria on a closed issue are P1 (the
 // closure is unsupported); on an open issue they are P3 (work in progress). A
 // nil reader restricts evaluation to the issue body.

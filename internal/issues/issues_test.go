@@ -64,6 +64,35 @@ func TestFindingsOpenUnmetIsP3(t *testing.T) {
 	}
 }
 
+func TestRelatedFindingsAndAreas(t *testing.T) {
+	body := "Docs: `docs/imp.md`\n"
+	read := func(p string) (string, bool) {
+		if p == "docs/imp.md" {
+			return "# ISS-IMP — runtime: sandbox\n\n`runtime/sandbox` and `kernel/allocator/routing.Decide`.\n", true
+		}
+		return "", false
+	}
+	areas := Areas(vcs.Issue{Body: body}, read)
+	want := map[string]bool{"runtime/sandbox": true, "kernel/allocator/routing": true}
+	if len(areas) != len(want) {
+		t.Fatalf("unexpected areas: %v", areas)
+	}
+	for _, a := range areas {
+		if !want[a] {
+			t.Fatalf("unexpected area %q (have %v)", a, areas)
+		}
+	}
+	all := []findings.Finding{
+		{Evidence: findings.Evidence{File: "runtime/sandbox/sandbox.go"}},
+		{Evidence: findings.Evidence{File: "kernel/allocator/routing/routing.go"}},
+		{Evidence: findings.Evidence{File: "memory/retrieval/retrieve.go"}},
+	}
+	rel := RelatedFindings(vcs.Issue{Body: body}, read, all)
+	if len(rel) != 2 {
+		t.Fatalf("expected 2 related findings, got %d: %+v", len(rel), rel)
+	}
+}
+
 func TestCollectCriteriaFromDocs(t *testing.T) {
 	body := "Docs: `docs/imp.md`\n\nSprint stuff.\n"
 	read := func(p string) (string, bool) {
