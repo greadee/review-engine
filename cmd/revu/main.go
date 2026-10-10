@@ -846,17 +846,22 @@ func reconcile(args []string) error {
 		}
 
 		switch {
-		case verdict.GoodToGo() && doClose && !isClosed:
-			if !*dryRun {
-				if err := gh.SetIssueState(ctx, owner, name, n, "closed"); err != nil {
-					return err
+		case verdict.GoodToGo() && !isClosed:
+			if doClose {
+				if !*dryRun {
+					if err := gh.SetIssueState(ctx, owner, name, n, "closed"); err != nil {
+						return err
+					}
 				}
+				fmt.Printf("#%d closed (%d/%d criteria met)\n", n, verdict.Met, verdict.Criteria)
+				closedN++
+			} else {
+				fmt.Printf("#%d good to go (%d/%d criteria met)\n", n, verdict.Met, verdict.Criteria)
+				openN++
 			}
-			fmt.Printf("#%d closed (%d/%d criteria met)\n", n, verdict.Met, verdict.Criteria)
-			closedN++
 		case verdict.GoodToGo():
-			fmt.Printf("#%d good to go (%d/%d criteria met)\n", n, verdict.Met, verdict.Criteria)
-			openN++
+			fmt.Printf("#%d remains closed (good to go, %d/%d)\n", n, verdict.Met, verdict.Criteria)
+			closedN++
 		default:
 			reason := fmt.Sprintf("%d/%d criteria met", verdict.Met, verdict.Criteria)
 			if !verdict.HasCriteria {

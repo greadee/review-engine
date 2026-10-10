@@ -65,9 +65,9 @@ func TestFindingsOpenUnmetIsP3(t *testing.T) {
 }
 
 func TestRelatedFindingsAndAreas(t *testing.T) {
-	body := "Docs: `docs/imp.md`\n"
+	body := "Docs: `docs/issues/imp.md`\n"
 	read := func(p string) (string, bool) {
-		if p == "docs/imp.md" {
+		if p == "docs/issues/imp.md" {
 			return "# ISS-IMP — runtime: sandbox\n\n`runtime/sandbox` and `kernel/allocator/routing.Decide`.\n", true
 		}
 		return "", false
@@ -94,9 +94,9 @@ func TestRelatedFindingsAndAreas(t *testing.T) {
 }
 
 func TestCollectCriteriaFromDocs(t *testing.T) {
-	body := "Docs: `docs/imp.md`\n\nSprint stuff.\n"
+	body := "Docs: `docs/issues/imp.md`\n\nSprint stuff.\n"
 	read := func(p string) (string, bool) {
-		if p == "docs/imp.md" {
+		if p == "docs/issues/imp.md" {
 			return "## Acceptance Criteria\n\n- [x] first\n- [ ] second\n", true
 		}
 		return "", false
