@@ -100,6 +100,15 @@ func TestStaleReferenceIgnoresStrikethrough(t *testing.T) {
 	}
 }
 
+func TestStaleReferenceIgnoresMultilineStrikethrough(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "docs/a.md", "~~Deprecated:\n`docs/removed.md` — superseded in the sprint.~~\n")
+	got := analyze(t, NewStaleReference(), analyzers.Target{Dir: dir, AllFiles: []string{"docs/a.md"}})
+	if len(got) != 0 {
+		t.Fatalf("multi-line strikethrough must be ignored, got %+v", got)
+	}
+}
+
 func TestFailOpen(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "s.go", "package s\n\nfunc (c checker) run() error {\n\tif c.policy != nil && !c.policy.Allowed() {\n\t\treturn err\n\t}\n\treturn nil\n}\n")

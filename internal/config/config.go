@@ -31,6 +31,8 @@ type Config struct {
 	Review ReviewConfig `yaml:"review"`
 	// Archive controls publishing of findings to a bot branch.
 	Archive ArchiveConfig `yaml:"archive"`
+	// Local writes findings to a local directory instead of GitHub when enabled.
+	Local LocalConfig `yaml:"local"`
 	// Store selects the tracking backend.
 	Store StoreConfig `yaml:"store"`
 	// IssueReview controls issue-close behavior.
@@ -95,6 +97,15 @@ type ArchiveConfig struct {
 	Dir     string `yaml:"dir"`
 }
 
+// LocalConfig configures offline, project-scoped findings storage. When
+// enabled, a run writes into <Dir>/<project>/ mirroring the remote layout and
+// never touches GitHub.
+type LocalConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// Dir is the storage root; a per-project subdirectory is appended.
+	Dir string `yaml:"dir"`
+}
+
 // IssueReviewConfig controls issue-close gating.
 type IssueReviewConfig struct {
 	// AutoClose closes an issue when all acceptance criteria are met.
@@ -125,6 +136,10 @@ func Default() Config {
 			Enabled: true,
 			Branch:  "review-artifacts",
 			Dir:     "runs",
+		},
+		Local: LocalConfig{
+			Enabled: false,
+			Dir:     ".review-engine",
 		},
 		Store: StoreConfig{
 			SQLite: false,
@@ -275,6 +290,12 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("REVIEW_STORE_SQLITE"); v != "" {
 		cfg.Store.SQLite = parseBool(v, cfg.Store.SQLite)
+	}
+	if v := os.Getenv("REVIEW_LOCAL"); v != "" {
+		cfg.Local.Enabled = parseBool(v, cfg.Local.Enabled)
+	}
+	if v := os.Getenv("REVIEW_LOCAL_DIR"); v != "" {
+		cfg.Local.Dir = v
 	}
 	if v := os.Getenv("REVIEW_STORE_PATH"); v != "" {
 		cfg.Store.Path = v

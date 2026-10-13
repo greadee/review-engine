@@ -30,7 +30,7 @@ var (
 	backtickSpan = regexp.MustCompile("`([^`\n]+)`")
 	markdownLink = regexp.MustCompile(`\]\(([^)\s]+)\)`)
 	repoPath     = regexp.MustCompile(`^\.?[\w][\w./-]*\.(go|md|json|ya?ml|ts|tsx|js|py|toml|schema|sql|css|html|sh)$`)
-	strikeSpan   = regexp.MustCompile(`~~[^~\n]+~~`)
+	strikeSpan   = regexp.MustCompile(`(?s)~~.*?~~`)
 )
 
 // stripStrikethrough removes Markdown strikethrough spans so that content the

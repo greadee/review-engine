@@ -144,6 +144,23 @@ the file, which is how the Action passes its inputs.
 - **Backend selection.** `revu config` prints the effective configuration; the
   tracking backend is chosen with `store.sqlite` (see below).
 
+### Local (offline) mode
+
+`revu run --local` writes findings to disk and never touches GitHub — no comment,
+no archive branch, no writes of any kind. It is project-scoped and mirrors the
+remote storage hierarchy:
+
+```
+<local.dir>/<project>/           # e.g. .review-engine/aa
+  runs/<runID>.json              # findings (same layout as the archive branch)
+  runs/<runID>.md
+  state.json                     # tracking state
+```
+
+`<project>` is the repository name (so a run on `greadee/aa` appends to
+`…/aa/`). Set the root with `local.dir` / `--local-dir` (or `REVIEW_LOCAL_DIR`);
+`--quiet` suppresses the rendered summary. See `revu.example.yaml`.
+
 ### Tracking store
 
 Tracking is on by default and uses the JSON store at `--state-dir`

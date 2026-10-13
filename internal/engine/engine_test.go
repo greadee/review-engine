@@ -12,6 +12,7 @@ import (
 	"github.com/greadee/review-engine/internal/config"
 	"github.com/greadee/review-engine/internal/findings"
 	"github.com/greadee/review-engine/internal/provider"
+	"github.com/greadee/review-engine/internal/report"
 	"github.com/greadee/review-engine/internal/reviewers"
 	"github.com/greadee/review-engine/internal/store"
 	"github.com/greadee/review-engine/internal/vcs"
@@ -150,6 +151,30 @@ func TestDetectorsWired(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected orphan detector finding, got %+v", res.Findings)
+	}
+}
+
+func TestPublishLocal(t *testing.T) {
+	cfg := config.Default()
+	eng := New(Options{Config: cfg, Store: store.Stateless{}})
+	dir := t.TempDir()
+	res := Result{Run: report.Run{
+		ID:       "pr@abc",
+		Profile:  "pr",
+		Findings: []findings.Finding{{ID: "x", Title: "t", Severity: findings.P2, Classification: findings.Bug}},
+	}}
+	path, err := eng.PublishLocal(dir, "aa", res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(dir, "aa", "runs", "pr@abc.md")
+	if path != want {
+		t.Fatalf("path = %s, want %s", path, want)
+	}
+	for _, f := range []string{"pr@abc.md", "pr@abc.json"} {
+		if _, err := os.Stat(filepath.Join(dir, "aa", "runs", f)); err != nil {
+			t.Fatalf("missing %s: %v", f, err)
+		}
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -161,6 +162,20 @@ func newStore(cfg config.Config, stateDir string) (store.Store, func() error, er
 	return store.Open(cfg.Store.SQLite, stateDir, cfg.Store.SQLitePath(stateDir))
 }
 
+// projectName derives the local project folder name: the repository name when
+// known, otherwise the base of the repository directory.
+func projectName(repository, repoDir string) string {
+	if repository = strings.TrimSpace(repository); repository != "" {
+		parts := strings.Split(repository, "/")
+		return parts[len(parts)-1]
+	}
+	abs, err := filepath.Abs(repoDir)
+	if err != nil {
+		return "project"
+	}
+	return filepath.Base(abs)
+}
+
 func run(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	var c commonFlags
@@ -172,6 +187,9 @@ func run(args []string) error {
 	noBlock := fs.Bool("no-block", false, "do not fail the run on blocking findings")
 	comment := fs.Bool("comment", false, "post the summary as a PR comment")
 	publish := fs.Bool("publish", false, "archive findings to the bot branch")
+	local := fs.Bool("local", false, "write findings to a local project folder; never touches GitHub")
+	localDir := fs.String("local-dir", "", "local storage root (default: config local.dir)")
+	quiet := fs.Bool("quiet", false, "suppress the rendered summary on stdout")
 	providerName := fs.String("provider", "", "override provider name")
 	model := fs.String("model", "", "override model id")
 	if err := fs.Parse(args); err != nil {
@@ -191,6 +209,12 @@ func run(args []string) error {
 	}
 	cfg.Profile = c.profile
 	cfg.ApplyProfile(c.profile)
+	if *local || *localDir != "" {
+		cfg.Local.Enabled = true
+	}
+	if *localDir != "" {
+		cfg.Local.Dir = *localDir
+	}
 	if *providerName != "" {
 		cfg.Provider.Name = *providerName
 	}
@@ -213,11 +237,18 @@ func run(args []string) error {
 	}
 	reviewer := reviewers.New(prov, cfg.Provider.Model)
 
+	// Local mode stores tracking state under the project folder and never
+	// touches GitHub.
+	project := projectName(c.repository, c.repoDir)
+	effectiveStateDir := *stateDir
+	if cfg.Local.Enabled {
+		effectiveStateDir = filepath.Join(cfg.Local.Dir, project)
+	}
 	var st store.Store
 	if cfg.Mode == config.ModeStateless {
 		st = store.Stateless{}
 	} else {
-		opened, closeStore, err := newStore(cfg, *stateDir)
+		opened, closeStore, err := newStore(cfg, effectiveStateDir)
 		if err != nil {
 			return err
 		}
@@ -242,7 +273,9 @@ func run(args []string) error {
 	if cfg.Profile == profiles.Audit || cfg.Profile == profiles.Sprint {
 		markdown = report.AuditMarkdown(res.Run)
 	}
-	fmt.Print(markdown)
+	if !*quiet {
+		fmt.Print(markdown)
+	}
 
 	if *outPath != "" {
 		if err := os.WriteFile(*outPath, []byte(markdown), 0o644); err != nil {
@@ -259,7 +292,13 @@ func run(args []string) error {
 		}
 	}
 
-	if (*publish || *comment) && !*dryRun {
+	if cfg.Local.Enabled {
+		path, err := eng.PublishLocal(cfg.Local.Dir, project, res)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "local findings: %s\n", path)
+	} else if (*publish || *comment) && !*dryRun {
 		owner, name, err := splitRepo(c.repository)
 		if err != nil {
 			return err
@@ -683,6 +722,10 @@ archive:
   enabled: true
   branch: review-artifacts
   dir: runs
+
+local:
+  enabled: false      # write findings to <dir>/<project>/ without touching GitHub
+  dir: .review-engine
 
 store:
   sqlite: false

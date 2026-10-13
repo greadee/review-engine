@@ -22,6 +22,12 @@ archive:
   branch: review-artifacts
   dir: runs
 
+# Offline, project-scoped storage. When enabled (or with --local), a run writes
+# to <dir>/<project>/<archive.dir>/<runID>.{json,md} and never touches GitHub.
+local:
+  enabled: false
+  dir: .review-engine
+
 store:
   sqlite: false       # opt-in; JSON is the default backend
   path: ""            # default: <state-dir>/review.db
