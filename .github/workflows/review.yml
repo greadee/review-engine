@@ -38,6 +38,9 @@ on:
       model:
         type: string
         default: ""
+      semantic:
+        type: string
+        default: "true"
       repository:
         type: string
         default: ""
@@ -94,6 +97,7 @@ jobs:
         with:
           phase: finalize
           model: ${{ inputs.model }}
+          semantic: ${{ inputs.semantic }}
           repository: ${{ inputs.repository }}
           pr: ${{ inputs.pr }}
           publish: ${{ inputs.publish }}

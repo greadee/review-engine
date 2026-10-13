@@ -27,6 +27,10 @@ inputs:
     description: "Model id to use for semantic review"
     required: false
     default: ""
+  semantic:
+    description: "Run the model-backed semantic pass (true|false)"
+    required: false
+    default: "true"
   base:
     description: "Base revision"
     required: false
@@ -115,6 +119,7 @@ runs:
         REVIEW_PROFILE: ${{ inputs.profile }}
         REVIEW_PROVIDER: ${{ inputs.provider }}
         REVIEW_MODEL: ${{ inputs.model }}
+        REVIEW_SEMANTIC: ${{ inputs.semantic }}
         REVIEW_ARCHIVE_BRANCH: ${{ inputs.archive-branch }}
         REVIEW_BLOCK_THRESHOLD: ${{ inputs.block-threshold }}
         REVIEW_STORE_SQLITE: ${{ inputs.store-sqlite }}
