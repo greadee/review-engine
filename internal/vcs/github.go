@@ -173,36 +173,66 @@ func (c *GitHub) createBranch(ctx context.Context, owner, repo, branch string) e
 	return c.do(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/%s/git/refs", owner, repo), payload, nil)
 }
 
+// maxContentRetries bounds retries when another writer updates the same file
+// concurrently.
+const maxContentRetries = 5
+
 func (c *GitHub) putFile(ctx context.Context, owner, repo, branch, path string, content []byte, message string) (string, error) {
-	// Look up an existing blob on the branch so updates carry the sha.
-	var existing struct {
-		SHA string `json:"sha"`
-	}
-	getPath := fmt.Sprintf("/repos/%s/%s/contents/%s?ref=%s", owner, repo, path, branch)
-	status, body, err := c.raw(ctx, http.MethodGet, getPath, nil)
-	if err != nil {
-		return "", err
-	}
-	if status == http.StatusOK {
-		_ = json.Unmarshal(body, &existing)
-	}
-	payload := map[string]any{
-		"message": message,
-		"content": base64.StdEncoding.EncodeToString(content),
-		"branch":  branch,
-	}
-	if existing.SHA != "" {
-		payload["sha"] = existing.SHA
-	}
-	var out struct {
-		Commit struct {
+	contentsPath := fmt.Sprintf("/repos/%s/%s/contents/%s", owner, repo, path)
+	getPath := contentsPath + "?ref=" + branch
+	var lastStatus int
+	var lastBody string
+	for attempt := 0; attempt < maxContentRetries; attempt++ {
+		// Read the current blob on the branch so the update carries its sha.
+		var existing struct {
 			SHA string `json:"sha"`
-		} `json:"commit"`
+		}
+		status, body, err := c.raw(ctx, http.MethodGet, getPath, nil)
+		if err != nil {
+			return "", err
+		}
+		if status == http.StatusOK {
+			_ = json.Unmarshal(body, &existing)
+		}
+		payload := map[string]any{
+			"message": message,
+			"content": base64.StdEncoding.EncodeToString(content),
+			"branch":  branch,
+		}
+		if existing.SHA != "" {
+			payload["sha"] = existing.SHA
+		}
+		data, err := json.Marshal(payload)
+		if err != nil {
+			return "", fmt.Errorf("github: encode contents: %w", err)
+		}
+		st, respBody, err := c.raw(ctx, http.MethodPut, contentsPath, bytes.NewReader(data))
+		if err != nil {
+			return "", err
+		}
+		if st >= 200 && st < 300 {
+			var out struct {
+				Commit struct {
+					SHA string `json:"sha"`
+				} `json:"commit"`
+			}
+			_ = json.Unmarshal(respBody, &out)
+			return out.Commit.SHA, nil
+		}
+		// 409/422 mean a concurrent writer changed the file (stale sha) or the
+		// branch moved; re-read the current sha and retry.
+		if st == http.StatusConflict || st == http.StatusUnprocessableEntity {
+			lastStatus, lastBody = st, string(respBody)
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(time.Duration(attempt+1) * 200 * time.Millisecond):
+			}
+			continue
+		}
+		return "", fmt.Errorf("github: PUT contents %s: status %d: %s", path, st, truncate(string(respBody), 300))
 	}
-	if err := c.do(ctx, http.MethodPut, fmt.Sprintf("/repos/%s/%s/contents/%s", owner, repo, path), payload, &out); err != nil {
-		return "", err
-	}
-	return out.Commit.SHA, nil
+	return "", fmt.Errorf("github: PUT contents %s: conflict after %d attempts: status %d: %s", path, maxContentRetries, lastStatus, truncate(lastBody, 300))
 }
 
 func (c *GitHub) do(ctx context.Context, method, path string, in, out any) error {

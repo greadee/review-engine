@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -32,6 +33,37 @@ func TestGitHubCreateIssue(t *testing.T) {
 	}
 	if num != 123 || gotTitle != "[revu] orphan (2 finding(s))" {
 		t.Fatalf("unexpected: num=%d title=%q", num, gotTitle)
+	}
+}
+
+func TestPutFileRetriesOnConflict(t *testing.T) {
+	puts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/o/r/contents/x.json"):
+			w.WriteHeader(http.StatusNotFound)
+		case r.Method == http.MethodPut && r.URL.Path == "/repos/o/r/contents/x.json":
+			puts++
+			if puts == 1 {
+				w.WriteHeader(http.StatusConflict)
+				_, _ = w.Write([]byte(`{"message":"is at abc but expected def"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"commit":{"sha":"newsha"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewGitHub("token")
+	c.BaseURL = srv.URL
+	sha, err := c.putFile(context.Background(), "o", "r", "b", "x.json", []byte("{}"), "m")
+	if err != nil {
+		t.Fatalf("putFile: %v", err)
+	}
+	if sha != "newsha" || puts != 2 {
+		t.Fatalf("sha=%q puts=%d", sha, puts)
 	}
 }
 
