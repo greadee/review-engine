@@ -154,6 +154,34 @@ func TestDetectorsWired(t *testing.T) {
 	}
 }
 
+func TestPersistPolicy(t *testing.T) {
+	mk := func(sev findings.Severity) []findings.Finding {
+		return []findings.Finding{{Severity: sev, Classification: findings.Bug}}
+	}
+	cases := []struct {
+		mode, risk string
+		fs         []findings.Finding
+		want       bool
+	}{
+		{"always", "P2", nil, true},
+		{"", "P2", nil, true},
+		{"on-findings", "P2", nil, false},
+		{"on-findings", "P2", mk(findings.P3), true},
+		{"on-risk", "P1", mk(findings.P2), false},
+		{"on-risk", "P1", mk(findings.P1), true},
+		{"on-risk", "P1", mk(findings.P0), true},
+		{"never", "P2", mk(findings.P0), false},
+	}
+	for _, tc := range cases {
+		cfg := config.Default()
+		cfg.Persist.Mode = tc.mode
+		cfg.Persist.Risk = tc.risk
+		if got := Persist(cfg, tc.fs); got != tc.want {
+			t.Errorf("Persist(%q,%q)=%v, want %v", tc.mode, tc.risk, got, tc.want)
+		}
+	}
+}
+
 func TestPublishLocal(t *testing.T) {
 	cfg := config.Default()
 	eng := New(Options{Config: cfg, Store: store.Stateless{}})

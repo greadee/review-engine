@@ -190,6 +190,8 @@ func run(args []string) error {
 	local := fs.Bool("local", false, "write findings to a local project folder; never touches GitHub")
 	localDir := fs.String("local-dir", "", "local storage root (default: config local.dir)")
 	quiet := fs.Bool("quiet", false, "suppress the rendered summary on stdout")
+	persist := fs.String("persist", "", "when to write findings: always|on-findings|on-risk|never")
+	risk := fs.String("risk", "", "severity threshold for --persist on-risk (P0..P3)")
 	providerName := fs.String("provider", "", "override provider name")
 	model := fs.String("model", "", "override model id")
 	if err := fs.Parse(args); err != nil {
@@ -214,6 +216,15 @@ func run(args []string) error {
 	}
 	if *localDir != "" {
 		cfg.Local.Dir = *localDir
+	}
+	if *persist != "" {
+		cfg.Persist.Mode = *persist
+	}
+	if *risk != "" {
+		cfg.Persist.Risk = *risk
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
 	}
 	if *providerName != "" {
 		cfg.Provider.Name = *providerName
@@ -245,7 +256,7 @@ func run(args []string) error {
 		effectiveStateDir = filepath.Join(cfg.Local.Dir, project)
 	}
 	var st store.Store
-	if cfg.Mode == config.ModeStateless {
+	if cfg.Mode == config.ModeStateless || strings.EqualFold(strings.TrimSpace(cfg.Persist.Mode), "never") {
 		st = store.Stateless{}
 	} else {
 		opened, closeStore, err := newStore(cfg, effectiveStateDir)
@@ -292,33 +303,54 @@ func run(args []string) error {
 		}
 	}
 
+	// Resolve owner/name once for publishing and commenting.
+	owner, name, hasRepo := "", "", false
+	if strings.TrimSpace(c.repository) != "" {
+		o, n, err := splitRepo(c.repository)
+		if err != nil {
+			return err
+		}
+		owner, name, hasRepo = o, n, true
+	}
+
+	// Local store: only when the persist policy allowed writing.
 	if cfg.Local.Enabled {
-		path, err := eng.PublishLocal(cfg.Local.Dir, project, res)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(os.Stderr, "local findings: %s\n", path)
-	} else if (*publish || *comment) && !*dryRun {
-		owner, name, err := splitRepo(c.repository)
-		if err != nil {
-			return err
-		}
-		gh := vcs.NewGitHub("")
-		if *publish {
-			url, err := eng.Publish(context.Background(), gh, owner, name, res)
+		if res.Persisted {
+			path, err := eng.PublishLocal(cfg.Local.Dir, project, res)
 			if err != nil {
 				return err
 			}
-			res.Run.ArchiveURL = url
-			fmt.Printf("\narchived findings: %s\n", url)
+			fmt.Fprintf(os.Stderr, "local findings: %s\n", path)
+		} else {
+			fmt.Fprintf(os.Stderr, "local findings: skipped (persist=%s)\n", strings.ToLower(strings.TrimSpace(cfg.Persist.Mode)))
 		}
-		if *comment && c.pr > 0 {
-			body := report.SummaryMarkdown(res.Run)
-			if err := gh.Comment(context.Background(), owner, name, c.pr, body); err != nil {
-				return err
-			}
-			fmt.Printf("posted comment on PR #%d\n", c.pr)
+	}
+
+	// Remote archive: only when the persist policy allowed writing.
+	if !cfg.Local.Enabled && *publish && !*dryRun && res.Persisted {
+		if !hasRepo {
+			return fmt.Errorf("--repository is required to publish")
 		}
+		gh := vcs.NewGitHub("")
+		url, err := eng.Publish(context.Background(), gh, owner, name, res)
+		if err != nil {
+			return err
+		}
+		res.Run.ArchiveURL = url
+		fmt.Printf("\narchived findings: %s\n", url)
+	}
+
+	// Notification is independent of persistence: publish/notify even when no
+	// findings are stored.
+	if *comment && c.pr > 0 && !*dryRun {
+		if !hasRepo {
+			return fmt.Errorf("--repository is required to comment")
+		}
+		gh := vcs.NewGitHub("")
+		if err := gh.Comment(context.Background(), owner, name, c.pr, report.SummaryMarkdown(res.Run)); err != nil {
+			return err
+		}
+		fmt.Printf("posted comment on PR #%d\n", c.pr)
 	}
 
 	if !*noBlock && len(res.Run.Blocking()) > 0 {
@@ -726,6 +758,10 @@ archive:
 local:
   enabled: false      # write findings to <dir>/<project>/ without touching GitHub
   dir: .review-engine
+
+persist:
+  mode: always        # always | on-findings | on-risk | never
+  risk: P2            # severity threshold used by on-risk
 
 store:
   sqlite: false

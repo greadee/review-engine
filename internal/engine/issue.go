@@ -29,7 +29,8 @@ func (e *Engine) RunIssue(ctx context.Context, issue vcs.Issue) (Result, error) 
 	}
 	cur := findings.Lifecycle(prev.Findings, set.Items(), runID)
 	resolved := findings.Compare(prev.Findings, cur)
-	if e.opts.Config.Mode != config.ModeStateless {
+	persisted := Persist(e.opts.Config, cur)
+	if persisted && e.opts.Config.Mode != config.ModeStateless {
 		if err := e.opts.Store.Save(ctx, store.State{RunID: runID, Findings: findings.MergeTracking(cur, resolved)}); err != nil {
 			return Result{}, err
 		}
@@ -44,7 +45,8 @@ func (e *Engine) RunIssue(ctx context.Context, issue vcs.Issue) (Result, error) 
 			Resolved:       resolved,
 			BlockThreshold: threshold(e.opts.Config.Review.BlockThreshold),
 		},
-		Findings: cur,
+		Findings:  cur,
+		Persisted: persisted,
 	}, nil
 }
 

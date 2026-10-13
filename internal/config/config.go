@@ -33,6 +33,9 @@ type Config struct {
 	Archive ArchiveConfig `yaml:"archive"`
 	// Local writes findings to a local directory instead of GitHub when enabled.
 	Local LocalConfig `yaml:"local"`
+	// Persist controls when findings are written to any store (local, archive,
+	// tracking).
+	Persist PersistConfig `yaml:"persist"`
 	// Store selects the tracking backend.
 	Store StoreConfig `yaml:"store"`
 	// IssueReview controls issue-close behavior.
@@ -106,6 +109,17 @@ type LocalConfig struct {
 	Dir string `yaml:"dir"`
 }
 
+// PersistConfig controls when a run's findings are written to a store. It
+// governs the local store, the remote archive, and the tracking state — not
+// notification (the PR/issue comment), which is controlled separately.
+type PersistConfig struct {
+	// Mode is one of: always (default), on-findings, on-risk, never.
+	Mode string `yaml:"mode"`
+	// Risk is the severity threshold (P0..P3) for on-risk; a finding at or
+	// above it triggers persistence.
+	Risk string `yaml:"risk"`
+}
+
 // IssueReviewConfig controls issue-close gating.
 type IssueReviewConfig struct {
 	// AutoClose closes an issue when all acceptance criteria are met.
@@ -140,6 +154,10 @@ func Default() Config {
 		Local: LocalConfig{
 			Enabled: false,
 			Dir:     ".review-engine",
+		},
+		Persist: PersistConfig{
+			Mode: "always",
+			Risk: "P2",
 		},
 		Store: StoreConfig{
 			SQLite: false,
@@ -179,7 +197,26 @@ func Load(path string) (Config, error) {
 		}
 	}
 	applyEnv(&cfg)
+	if err := cfg.Validate(); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+// PersistModes lists the accepted persist.mode values.
+var PersistModes = []string{"always", "on-findings", "on-risk", "never"}
+
+func (c Config) Validate() error {
+	mode := strings.ToLower(strings.TrimSpace(c.Persist.Mode))
+	if mode == "" {
+		return nil // treated as always
+	}
+	for _, m := range PersistModes {
+		if mode == m {
+			return nil
+		}
+	}
+	return fmt.Errorf("config: persist.mode %q must be one of %s", c.Persist.Mode, strings.Join(PersistModes, ", "))
 }
 
 // GlobalPath returns the global config path, or "" when none is configured.
@@ -296,6 +333,12 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("REVIEW_LOCAL_DIR"); v != "" {
 		cfg.Local.Dir = v
+	}
+	if v := os.Getenv("REVIEW_PERSIST"); v != "" {
+		cfg.Persist.Mode = v
+	}
+	if v := os.Getenv("REVIEW_RISK"); v != "" {
+		cfg.Persist.Risk = v
 	}
 	if v := os.Getenv("REVIEW_STORE_PATH"); v != "" {
 		cfg.Store.Path = v

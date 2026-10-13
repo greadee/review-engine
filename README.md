@@ -161,6 +161,25 @@ remote storage hierarchy:
 `…/aa/`). Set the root with `local.dir` / `--local-dir` (or `REVIEW_LOCAL_DIR`);
 `--quiet` suppresses the rendered summary. See `revu.example.yaml`.
 
+### Persistence policy
+
+`persist.mode` (or `--persist`) controls when findings are written to **any**
+store — local, remote archive, and tracking. Notification (the PR/issue comment)
+is independent and still runs when enabled.
+
+| Mode | Writes when |
+|---|---|
+| `always` (default) | always |
+| `on-findings` | at least one finding exists |
+| `on-risk` | a finding is at or above `persist.risk` (P0–P3; `--risk`) |
+| `never` | never — no local, archive, or tracking write; comment/notify only |
+
+```bash
+revu run --persist on-risk --risk P2      # only store when a finding is P2+
+revu run --persist on-findings            # only store when findings exist
+revu run --persist never                  # compute + notify, store nothing
+```
+
 ### Tracking store
 
 Tracking is on by default and uses the JSON store at `--state-dir`

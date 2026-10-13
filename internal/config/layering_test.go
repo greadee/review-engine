@@ -77,6 +77,30 @@ func TestMarshal(t *testing.T) {
 	}
 }
 
+func TestPersistValidateAndEnv(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Persist.Mode != "always" || cfg.Persist.Risk != "P2" {
+		t.Fatalf("unexpected persist defaults: %+v", cfg.Persist)
+	}
+	bad := cfg
+	bad.Persist.Mode = "sometimes"
+	if err := bad.Validate(); err == nil {
+		t.Fatal("expected validation error for unknown persist mode")
+	}
+	t.Setenv("REVIEW_PERSIST", "on-risk")
+	t.Setenv("REVIEW_RISK", "P1")
+	cfg, err = Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Persist.Mode != "on-risk" || cfg.Persist.Risk != "P1" {
+		t.Fatalf("env not applied: %+v", cfg.Persist)
+	}
+}
+
 func TestSQLitePath(t *testing.T) {
 	if got := (StoreConfig{}).SQLitePath(".review-state"); got != ".review-state/review.db" {
 		t.Fatalf("got %q", got)

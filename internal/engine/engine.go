@@ -58,6 +58,36 @@ func New(opts Options) *Engine {
 type Result struct {
 	Run      report.Run
 	Findings []findings.Finding
+	// Persisted reports whether the persist policy allowed the run to be
+	// written to a store. Callers must not write local or remote findings when
+	// it is false.
+	Persisted bool
+}
+
+// Persist applies the persist policy: whether the findings should be written to
+// any store. Mode "always" persists; "on-findings" only when at least one
+// finding exists; "on-risk" only when a finding is at or above the risk
+// threshold; "never" never persists.
+func Persist(cfg config.Config, fs []findings.Finding) bool {
+	switch strings.ToLower(strings.TrimSpace(cfg.Persist.Mode)) {
+	case "never":
+		return false
+	case "on-findings":
+		return len(fs) > 0
+	case "on-risk":
+		risk := findings.Severity(strings.ToUpper(strings.TrimSpace(cfg.Persist.Risk)))
+		if !risk.Valid() {
+			risk = findings.P2
+		}
+		for _, f := range fs {
+			if f.Severity.Rank() >= 0 && f.Severity.Rank() <= risk.Rank() {
+				return true
+			}
+		}
+		return false
+	default: // always
+		return true
+	}
 }
 
 // RunRange collects and finalizes in one process.

@@ -28,6 +28,12 @@ local:
   enabled: false
   dir: .review-engine
 
+# When findings are written to any store (local, archive, tracking). Notification
+# (the PR/issue comment) is independent and controlled by --comment.
+persist:
+  mode: always        # always | on-findings | on-risk | never
+  risk: P2            # severity threshold (P0..P3) used by on-risk
+
 store:
   sqlite: false       # opt-in; JSON is the default backend
   path: ""            # default: <state-dir>/review.db

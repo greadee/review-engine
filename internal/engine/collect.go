@@ -106,7 +106,8 @@ func (e *Engine) Finalize(ctx context.Context, b bundle.Bundle) (Result, error) 
 	}
 	cur := findings.Lifecycle(prev.Findings, set.Items(), b.RunID)
 	resolved := findings.Compare(prev.Findings, cur)
-	if e.opts.Config.Mode != config.ModeStateless {
+	persisted := Persist(e.opts.Config, cur)
+	if persisted && e.opts.Config.Mode != config.ModeStateless {
 		if err := e.opts.Store.Save(ctx, store.State{RunID: b.RunID, Findings: findings.MergeTracking(cur, resolved)}); err != nil {
 			return Result{}, err
 		}
@@ -125,6 +126,7 @@ func (e *Engine) Finalize(ctx context.Context, b bundle.Bundle) (Result, error) 
 			Resolved:       resolved,
 			BlockThreshold: threshold(b.BlockThreshold),
 		},
-		Findings: cur,
+		Findings:  cur,
+		Persisted: persisted,
 	}, nil
 }
