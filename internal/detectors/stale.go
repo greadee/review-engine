@@ -14,6 +14,10 @@ import (
 
 // StaleReference flags documentation that points at repository paths which no
 // longer exist — typically left behind after a removal or rename.
+//
+// It honours the project rule that records are never deleted: content already
+// marked deprecated with Markdown strikethrough (~~...~~) is treated as a
+// deliberate historical record and is not reported.
 type StaleReference struct{}
 
 // NewStaleReference returns a stale-reference detector.
@@ -26,7 +30,14 @@ var (
 	backtickSpan = regexp.MustCompile("`([^`\n]+)`")
 	markdownLink = regexp.MustCompile(`\]\(([^)\s]+)\)`)
 	repoPath     = regexp.MustCompile(`^\.?[\w][\w./-]*\.(go|md|json|ya?ml|ts|tsx|js|py|toml|schema|sql|css|html|sh)$`)
+	strikeSpan   = regexp.MustCompile(`~~[^~\n]+~~`)
 )
+
+// stripStrikethrough removes Markdown strikethrough spans so that content the
+// project has already marked deprecated is not re-reported.
+func stripStrikethrough(s string) string {
+	return strikeSpan.ReplaceAllString(s, "")
+}
 
 type candidate struct {
 	value string
@@ -47,10 +58,11 @@ func (StaleReference) Analyze(_ context.Context, t analyzers.Target) ([]findings
 			continue
 		}
 		var candidates []candidate
-		for _, m := range backtickSpan.FindAllStringSubmatch(string(data), -1) {
+		content := stripStrikethrough(string(data))
+		for _, m := range backtickSpan.FindAllStringSubmatch(content, -1) {
 			candidates = append(candidates, candidate{value: m[1]})
 		}
-		for _, m := range markdownLink.FindAllStringSubmatch(string(data), -1) {
+		for _, m := range markdownLink.FindAllStringSubmatch(content, -1) {
 			candidates = append(candidates, candidate{value: m[1], link: true})
 		}
 		docDir := path.Dir(filepathSlash(docPath))
@@ -78,7 +90,7 @@ func (StaleReference) Analyze(_ context.Context, t analyzers.Target) ([]findings
 				Severity:       findings.P3,
 				Evidence:       findings.Evidence{File: filepathSlash(docPath), Snippet: clean},
 				Impact:         "Stale reference misleads readers and tools.",
-				Recommendation: "Update or remove the reference.",
+				Recommendation: "Mark the superseded reference deprecated in place with ~~strikethrough~~ and a note; records are never deleted.",
 				Detector:       "detector.stale-reference",
 				Anchor:         "stale:" + clean,
 			})

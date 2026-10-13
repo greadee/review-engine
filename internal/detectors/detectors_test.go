@@ -86,6 +86,20 @@ func TestStaleReferenceDotdir(t *testing.T) {
 	}
 }
 
+func TestStaleReferenceIgnoresStrikethrough(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "docs/a.md", "Still valid: `docs/missing.md`.\n\n~~Deprecated: `docs/removed.md` (superseded 2026).~~\n")
+	got := analyze(t, NewStaleReference(), analyzers.Target{Dir: dir, AllFiles: []string{"docs/a.md"}})
+	for _, f := range got {
+		if f.Evidence.Snippet == "docs/removed.md" {
+			t.Fatalf("struck-through reference must not be reported: %+v", f)
+		}
+	}
+	if len(got) != 1 || got[0].Evidence.Snippet != "docs/missing.md" {
+		t.Fatalf("expected only the non-struck reference, got %+v", got)
+	}
+}
+
 func TestFailOpen(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "s.go", "package s\n\nfunc (c checker) run() error {\n\tif c.policy != nil && !c.policy.Allowed() {\n\t\treturn err\n\t}\n\treturn nil\n}\n")

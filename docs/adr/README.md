@@ -8,5 +8,6 @@
 | [0004](0004-archive-strategy.md) | Archive strategy |
 | [0005](0005-two-phase-review.md) | Two-phase review for fork safety |
 | [0006](0006-optional-sqlite-store.md) | Optional SQLite tracking store |
+| [0007](0007-no-deletion-mark-deprecated.md) | Records are never deleted; mark deprecated with strikethrough |
 
 New decisions are added as `NNNN-title.md` and listed here.

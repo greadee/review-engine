@@ -160,7 +160,7 @@ detectors that catch code which compiles and passes tests but is still wrong:
 | Detector | Catches |
 |---|---|
 | `detector.orphan` | Exported functions with only test callers, or no callers — the "not wired into production" class |
-| `detector.stale-reference` | Documentation pointing at repository paths that no longer exist |
+| `detector.stale-reference` | Documentation pointing at repository paths that no longer exist (content already marked deprecated with `~~strikethrough~~` is ignored — records are never deleted) |
 | `detector.fail-open` | Nil-guarded checks where a missing dependency silently disables the guard |
 | `detector.unfinished` | TODO/FIXME/XXX markers and not-implemented code paths |
 
