@@ -39,10 +39,17 @@ func (e *Engine) Publish(ctx context.Context, gh *vcs.GitHub, owner, repo string
 		base + ".md":   []byte(report.ReviewMarkdown(res.Run)),
 	}
 	message := fmt.Sprintf("chore(review): record findings for %s", res.Run.ID)
-	if _, err := gh.PublishFiles(ctx, owner, repo, branch, files, message); err != nil {
+	commit, err := gh.PublishFiles(ctx, owner, repo, branch, files, message)
+	if err != nil {
 		return "", fmt.Errorf("engine: publish findings: %w", err)
 	}
-	return blobURL(gh.BaseURL, owner, repo, branch, base+".md"), nil
+	// Link to the commit SHA rather than the branch so the permalink is
+	// immutable even as the bot branch advances.
+	ref := commit
+	if ref == "" {
+		ref = branch
+	}
+	return blobURL(gh.BaseURL, owner, repo, ref, base+".md"), nil
 }
 
 func blobURL(apiBase, owner, repo, branch, file string) string {

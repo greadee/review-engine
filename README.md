@@ -45,7 +45,9 @@ jobs:
 The action builds the engine, runs the selected profile, archives findings to the
 `review-artifacts` branch, and posts a summary comment on the PR. More examples:
 [`examples/review.yml`](examples/review.yml) and
-[`examples/issue-review.yml`](examples/issue-review.yml).
+[`examples/issue-review.yml`](examples/issue-review.yml). See
+[`docs/consumer-install.md`](docs/consumer-install.md) for the minimal install
+steps and the exact permissions each job needs.
 
 ### Versioning and pinning
 
