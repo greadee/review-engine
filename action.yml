@@ -113,73 +113,32 @@ runs:
     - name: Run review
       id: run
       shell: bash
+      # Every input is exposed as data through the environment; the script never
+      # interpolates a caller-supplied value into its text. See scripts/run-action.sh.
       env:
+        REVIEW_INPUT_PHASE: ${{ inputs.phase }}
+        REVIEW_INPUT_BUNDLE: ${{ inputs.bundle }}
+        REVIEW_INPUT_PROFILE: ${{ inputs.profile }}
+        REVIEW_INPUT_PROVIDER: ${{ inputs.provider }}
+        REVIEW_INPUT_MODEL: ${{ inputs.model }}
+        REVIEW_INPUT_SEMANTIC: ${{ inputs.semantic }}
+        REVIEW_INPUT_BASE: ${{ inputs.base }}
+        REVIEW_INPUT_HEAD: ${{ inputs.head }}
+        REVIEW_INPUT_CONFIG: ${{ inputs.config }}
+        REVIEW_INPUT_REPOSITORY: ${{ inputs.repository }}
+        REVIEW_INPUT_PR: ${{ inputs.pr }}
+        REVIEW_INPUT_ISSUE: ${{ inputs.issue }}
+        REVIEW_INPUT_PUBLISH: ${{ inputs.publish }}
+        REVIEW_INPUT_COMMENT: ${{ inputs.comment }}
+        REVIEW_INPUT_BLOCK: ${{ inputs.block }}
+        REVIEW_INPUT_REOPEN: ${{ inputs.reopen }}
+        REVIEW_INPUT_CLOSE: ${{ inputs.close }}
+        REVIEW_INPUT_ARCHIVE_BRANCH: ${{ inputs.archive-branch }}
+        REVIEW_INPUT_STORE_SQLITE: ${{ inputs.store-sqlite }}
+        REVIEW_INPUT_BLOCK_THRESHOLD: ${{ inputs.block-threshold }}
+        REVIEW_ACTION_PATH: ${{ github.action_path }}
         REVIEW_PROVIDER_API_KEY: ${{ inputs.api-key }}
         GITHUB_TOKEN: ${{ github.token }}
-        REVIEW_PROFILE: ${{ inputs.profile }}
-        REVIEW_PROVIDER: ${{ inputs.provider }}
-        REVIEW_MODEL: ${{ inputs.model }}
-        REVIEW_SEMANTIC: ${{ inputs.semantic }}
-        REVIEW_ARCHIVE_BRANCH: ${{ inputs.archive-branch }}
-        REVIEW_BLOCK_THRESHOLD: ${{ inputs.block-threshold }}
-        REVIEW_STORE_SQLITE: ${{ inputs.store-sqlite }}
-        REVIEW_ISSUE_AUTO_CLOSE: ${{ inputs.close }}
-        REVIEW_ISSUE_AUTO_REOPEN: ${{ inputs.reopen }}
       run: |
         set -euo pipefail
-        echo "summary=summary.md" >> "$GITHUB_OUTPUT"
-        phase="${{ inputs.phase }}"
-
-        if [ "$phase" = "collect" ]; then
-          "$RUNNER_TEMP/revu" collect \
-            --config "${{ inputs.config }}" \
-            --profile "${{ inputs.profile }}" \
-            --base "${{ inputs.base }}" \
-            --head "${{ inputs.head }}" \
-            --repository "${{ inputs.repository }}" \
-            --out "${{ inputs.bundle }}"
-          exit 0
-        fi
-
-        if [ "$phase" = "finalize" ]; then
-          args=(finalize
-            --config "${{ inputs.config }}"
-            --bundle "${{ inputs.bundle }}"
-            --repository "${{ inputs.repository }}"
-            --out summary.md
-            --json findings.json)
-          [ -n "${{ inputs.pr }}" ] && args+=(--pr "${{ inputs.pr }}")
-          [ "${{ inputs.publish }}" = "true" ] && args+=(--publish)
-          [ "${{ inputs.comment }}" = "true" ] && args+=(--comment)
-          [ "${{ inputs.block }}" = "true" ] || args+=(--no-block)
-          "$RUNNER_TEMP/revu" "${args[@]}"
-          exit $?
-        fi
-
-        if [ "${{ inputs.profile }}" = "issue" ]; then
-          args=(issue
-            --config "${{ inputs.config }}"
-            --repository "${{ inputs.repository }}"
-            --issue "${{ inputs.issue }}"
-            --out summary.md)
-          [ "${{ inputs.comment }}" = "true" ] && args+=(--comment)
-          [ "${{ inputs.reopen }}" = "true" ] && args+=(--reopen)
-          [ "${{ inputs.close }}" = "true" ] && args+=(--close)
-          [ "${{ inputs.block }}" = "true" ] && args+=(--block)
-          "$RUNNER_TEMP/revu" "${args[@]}"
-          exit $?
-        fi
-
-        args=(run
-          --config "${{ inputs.config }}"
-          --profile "${{ inputs.profile }}"
-          --base "${{ inputs.base }}"
-          --head "${{ inputs.head }}"
-          --repository "${{ inputs.repository }}"
-          --out summary.md
-          --json findings.json)
-        [ -n "${{ inputs.pr }}" ] && args+=(--pr "${{ inputs.pr }}")
-        [ "${{ inputs.publish }}" = "true" ] && args+=(--publish)
-        [ "${{ inputs.comment }}" = "true" ] && args+=(--comment)
-        [ "${{ inputs.block }}" = "true" ] || args+=(--no-block)
-        "$RUNNER_TEMP/revu" "${args[@]}"
+        bash "$REVIEW_ACTION_PATH/scripts/run-action.sh"
