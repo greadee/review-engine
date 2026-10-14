@@ -424,7 +424,7 @@ func collectCmd(args []string) error {
 		return err
 	}
 	// Collect never needs a provider or tracker: it must not touch secrets.
-	eng := engine.New(engine.Options{Config: cfg, Repo: repo})
+	eng := engine.New(engine.Options{Config: cfg, Repo: repo, PR: c.pr})
 	b, err := eng.Collect(context.Background(), c.profile, c.base, c.head, c.repository, c.head)
 	if err != nil {
 		return err
@@ -450,6 +450,10 @@ func finalizeCmd(args []string) error {
 	publish := fs.Bool("publish", false, "archive findings to the bot branch")
 	providerName := fs.String("provider", "", "override provider name")
 	model := fs.String("model", "", "override model id")
+	expectRepo := fs.String("expect-repository", "", "require the bundle's repository to match")
+	expectPR := fs.Int("expect-pr", 0, "require the bundle's pull request number to match")
+	expectHead := fs.String("expect-head", "", "require the bundle's head revision to match")
+	expectProfile := fs.String("expect-profile", "", "require the bundle's profile to match")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -468,10 +472,17 @@ func finalizeCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	cfg.ApplyProfile(b.Profile)
-	if len(cfg.Review.Rubric) == 0 {
-		cfg.Review.Rubric = b.Rubric
+	// Bind the untrusted artifact to the trusted workflow event so a tampered or
+	// replayed bundle cannot be finalized as if it described another review.
+	if err := b.Verify(bundle.Trusted{
+		Repository: *expectRepo,
+		PR:         *expectPR,
+		Head:       *expectHead,
+		Profile:    *expectProfile,
+	}); err != nil {
+		return err
 	}
+	cfg.ApplyProfile(b.Profile)
 	if len(cfg.Review.Rubric) == 0 {
 		cfg.Review.Rubric = profiles.Rubric(b.Profile)
 	}

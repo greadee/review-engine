@@ -68,3 +68,37 @@ func TestAuditMarkdown(t *testing.T) {
 		}
 	}
 }
+
+func TestUnverifiedFindingsDoNotBlock(t *testing.T) {
+	r := Run{BlockThreshold: findings.P1, Findings: []findings.Finding{
+		{Title: "forged", Severity: findings.P0, Classification: findings.Security, Evidence: findings.Evidence{File: "a.go"}, Unverified: true},
+	}}
+	if len(r.Blocking()) != 0 {
+		t.Fatalf("an unverified finding must not block: %+v", r.Blocking())
+	}
+	if len(r.NonBlocking()) != 1 {
+		t.Fatalf("an unverified finding should still be reported, got %d", len(r.NonBlocking()))
+	}
+	if r.Recommendation() == "Approve" {
+		t.Fatal("must not approve while any finding exists")
+	}
+	if !strings.Contains(ReviewMarkdown(r), "evidence unverified") {
+		t.Fatal("report should label unverified evidence")
+	}
+}
+
+func TestSanitizeNeutralizesUntrustedText(t *testing.T) {
+	r := Run{BlockThreshold: findings.P1, Findings: []findings.Finding{
+		{Title: "<script>alert(1)</script> @team", Severity: findings.P2, Classification: findings.Bug, Evidence: findings.Evidence{File: "a.go", Line: 1}, Impact: "@here fix <b>"},
+	}}
+	md := ReviewMarkdown(r)
+	if strings.Contains(md, "<script>") {
+		t.Fatalf("raw HTML leaked:\n%s", md)
+	}
+	if strings.Contains(md, "@team") || strings.Contains(md, "@here") {
+		t.Fatalf("mentions not defused:\n%s", md)
+	}
+	if !strings.Contains(md, "&lt;script&gt;") {
+		t.Fatalf("expected escaped HTML:\n%s", md)
+	}
+}

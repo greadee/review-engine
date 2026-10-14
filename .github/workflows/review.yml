@@ -103,5 +103,9 @@ jobs:
           publish: ${{ inputs.publish }}
           comment: ${{ inputs.comment }}
           block: ${{ inputs.block }}
+          expect-repository: ${{ inputs.repository }}
+          expect-pr: ${{ inputs.pr }}
+          expect-head: ${{ github.sha }}
+          expect-profile: ${{ inputs.profile }}
           bundle: bundle.json
           api-key: ${{ secrets.provider-api-key }}

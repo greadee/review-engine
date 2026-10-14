@@ -101,6 +101,10 @@ type Finding struct {
 	FirstSeen string `json:"firstSeen,omitempty"`
 	LastSeen  string `json:"lastSeen,omitempty"`
 	RunID     string `json:"runId,omitempty"`
+	// Unverified marks a finding whose cited evidence could not be confirmed
+	// against the reviewed source. It is set when finalizing an untrusted
+	// bundle. Unverified findings are reported but never block.
+	Unverified bool `json:"unverified,omitempty"`
 }
 
 // Validate reports whether the finding is well formed. It does not require an

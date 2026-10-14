@@ -63,6 +63,22 @@ inputs:
     description: "Issue number (for the issue profile)"
     required: false
     default: ""
+  expect-repository:
+    description: "finalize: require the bundle to describe this repository"
+    required: false
+    default: ""
+  expect-pr:
+    description: "finalize: require the bundle to describe this pull request"
+    required: false
+    default: ""
+  expect-head:
+    description: "finalize: require the bundle to describe this head revision"
+    required: false
+    default: ""
+  expect-profile:
+    description: "finalize: require the bundle to use this profile"
+    required: false
+    default: ""
   publish:
     description: "Archive findings to the bot branch"
     required: false
@@ -138,6 +154,10 @@ runs:
         REVIEW_INPUT_REPOSITORY: ${{ inputs.repository }}
         REVIEW_INPUT_PR: ${{ inputs.pr }}
         REVIEW_INPUT_ISSUE: ${{ inputs.issue }}
+        REVIEW_INPUT_EXPECT_REPOSITORY: ${{ inputs.expect-repository }}
+        REVIEW_INPUT_EXPECT_PR: ${{ inputs.expect-pr }}
+        REVIEW_INPUT_EXPECT_HEAD: ${{ inputs.expect-head }}
+        REVIEW_INPUT_EXPECT_PROFILE: ${{ inputs.expect-profile }}
         REVIEW_INPUT_PUBLISH: ${{ inputs.publish }}
         REVIEW_INPUT_COMMENT: ${{ inputs.comment }}
         REVIEW_INPUT_BLOCK: ${{ inputs.block }}

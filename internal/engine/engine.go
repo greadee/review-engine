@@ -33,6 +33,9 @@ type Options struct {
 	Reviewer  *reviewers.Semantic
 	Store     store.Store
 	Now       func() time.Time
+	// PR is the pull request number, recorded in the bundle so the finalize
+	// phase can bind the artifact to the trusted event.
+	PR int
 }
 
 // Engine runs profiles over a repository.

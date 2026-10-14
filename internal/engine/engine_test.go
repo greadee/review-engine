@@ -301,3 +301,96 @@ func TestRunRangeStateless(t *testing.T) {
 		t.Fatalf("expected Approve, got %s", res.Run.Recommendation())
 	}
 }
+
+func staticOnlyEngine(t *testing.T, cfg config.Config) *Engine {
+	t.Helper()
+	cfg.Review.Static = false
+	cfg.Review.Semantic = false
+	return New(Options{Config: cfg, Store: store.Stateless{}})
+}
+
+// TestFinalizeMarksUnverifiedEvidence ensures a bundle cannot make a finding
+// block unless it cites a file and line that exist in the reviewed source.
+func TestFinalizeMarksUnverifiedEvidence(t *testing.T) {
+	eng := staticOnlyEngine(t, config.Default())
+	b := bundle.Bundle{
+		Version: bundle.Version,
+		Profile: "pr",
+		RunID:   "pr@abc",
+		Head:    "abc",
+		Files:   []reviewers.FileContent{{Path: "a.go", Content: "package a\n\nvar X = 1\n"}},
+		StaticFindings: []findings.Finding{
+			{Title: "real", Severity: findings.P0, Classification: findings.Bug, Detector: "d",
+				Evidence: findings.Evidence{File: "a.go", Line: 3, Snippet: "var X = 1"}},
+			{Title: "forged", Severity: findings.P0, Classification: findings.Bug, Detector: "d2",
+				Evidence: findings.Evidence{File: "evil.go", Line: 1}},
+			{Title: "out of range", Severity: findings.P0, Classification: findings.Bug, Detector: "d3",
+				Evidence: findings.Evidence{File: "a.go", Line: 9999}},
+		},
+	}
+	res, err := eng.Finalize(context.Background(), b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocking := res.Run.Blocking()
+	if len(blocking) != 1 || blocking[0].Title != "real" {
+		t.Fatalf("only the verified finding may block, got %+v", blocking)
+	}
+	unverified := 0
+	for _, f := range res.Findings {
+		if f.Unverified {
+			unverified++
+		}
+	}
+	if unverified != 2 {
+		t.Fatalf("expected 2 unverified findings, got %d", unverified)
+	}
+	if len(res.Run.NonBlocking()) != 2 {
+		t.Fatalf("unverified findings should surface as non-blocking: %+v", res.Run.NonBlocking())
+	}
+}
+
+// TestFinalizeIgnoresBundleThreshold ensures the bundle cannot loosen the gate.
+func TestFinalizeIgnoresBundleThreshold(t *testing.T) {
+	cfg := config.Default()
+	cfg.Review.BlockThreshold = "P1"
+	eng := staticOnlyEngine(t, cfg)
+	b := bundle.Bundle{
+		Version:        bundle.Version,
+		Profile:        "pr",
+		RunID:          "pr@abc",
+		Head:           "abc",
+		BlockThreshold: "P3", // attacker claims a permissive gate
+		Files:          []reviewers.FileContent{{Path: "a.go", Content: "package a\nvar X = 1\n"}},
+		StaticFindings: []findings.Finding{{
+			Title: "p2", Severity: findings.P2, Classification: findings.Bug, Detector: "d",
+			Evidence: findings.Evidence{File: "a.go", Line: 2, Snippet: "var X = 1"},
+		}},
+	}
+	res, err := eng.Finalize(context.Background(), b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Run.BlockThreshold != findings.P1 {
+		t.Fatalf("trusted threshold must win, got %s", res.Run.BlockThreshold)
+	}
+	if len(res.Run.Blocking()) != 0 {
+		t.Fatalf("P2 must not block at a trusted P1 gate: %+v", res.Run.Blocking())
+	}
+}
+
+// TestFinalizeRejectsInvalidBundle rejects a bundle that fails schema checks.
+func TestFinalizeRejectsInvalidBundle(t *testing.T) {
+	eng := staticOnlyEngine(t, config.Default())
+	for name, b := range map[string]bundle.Bundle{
+		"version": {Version: 99, Profile: "pr", RunID: "pr@x"},
+		"profile": {Version: bundle.Version, Profile: "root", RunID: "pr@x"},
+		"finding": {Version: bundle.Version, Profile: "pr", RunID: "pr@x", StaticFindings: []findings.Finding{{Severity: findings.P1, Classification: findings.Bug}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := eng.Finalize(context.Background(), b); err == nil {
+				t.Fatalf("expected rejection of invalid bundle (%s)", name)
+			}
+		})
+	}
+}

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/greadee/review-engine/internal/analyzers"
 	"github.com/greadee/review-engine/internal/bundle"
@@ -26,6 +27,12 @@ func (e *Engine) Collect(ctx context.Context, profile, base, head, repository, r
 	changes, err := e.opts.Repo.Changes(base, head)
 	if err != nil {
 		return bundle.Bundle{}, fmt.Errorf("engine: diff %s..%s: %w", base, head, err)
+	}
+	// Record the resolved head SHA so the finalize phase can bind the artifact
+	// to the trusted workflow event.
+	headSHA, err := e.opts.Repo.HeadSHA(head)
+	if err != nil {
+		headSHA = head
 	}
 	sc := scope.Resolve(profile, changes, e.opts.Config.Ignore)
 	allFiles, _ := e.opts.Repo.ListFiles(head)
@@ -57,10 +64,11 @@ func (e *Engine) Collect(ctx context.Context, profile, base, head, repository, r
 		Version:        bundle.Version,
 		Profile:        profile,
 		Repository:     repository,
+		PR:             e.opts.PR,
 		Ref:            ref,
 		Base:           base,
-		Head:           head,
-		RunID:          runID(profile, head, e.opts.Now()),
+		Head:           headSHA,
+		RunID:          runID(profile, headSHA, e.opts.Now()),
 		Generated:      e.opts.Now().UTC(),
 		BlockThreshold: e.opts.Config.Review.BlockThreshold,
 		Rubric:         e.opts.Config.Review.Rubric,
@@ -73,9 +81,21 @@ func (e *Engine) Collect(ctx context.Context, profile, base, head, repository, r
 // review to the collected files, merges and normalizes findings, updates
 // tracking, and builds the report. It does not need the repository working
 // tree, so it can run in a job that never checks out untrusted code.
+//
+// The bundle is treated as untrusted input: it is schema-validated, every
+// finding must be well formed, and each finding's evidence must correspond to
+// the bundled source or the finding is marked unverified and cannot block. The
+// block threshold comes from trusted configuration, never from the bundle.
 func (e *Engine) Finalize(ctx context.Context, b bundle.Bundle) (Result, error) {
+	if err := b.Validate(); err != nil {
+		return Result{}, err
+	}
+	source := sourceIndex(b.Files)
 	set := findings.NewSet()
 	for _, f := range b.StaticFindings {
+		if err := f.Validate(); err != nil {
+			continue
+		}
 		set.Add(f)
 	}
 
@@ -83,9 +103,9 @@ func (e *Engine) Finalize(ctx context.Context, b bundle.Bundle) (Result, error) 
 		if e.opts.Reviewer == nil || e.opts.Provider == nil {
 			return Result{}, fmt.Errorf("engine: semantic review is enabled but no provider is configured")
 		}
-		rubric := b.Rubric
+		rubric := e.opts.Config.Review.Rubric
 		if len(rubric) == 0 {
-			rubric = e.opts.Config.Review.Rubric
+			rubric = b.Rubric
 		}
 		found, err := e.opts.Reviewer.Review(ctx, reviewers.Input{
 			Profile: b.Profile,
@@ -96,7 +116,17 @@ func (e *Engine) Finalize(ctx context.Context, b bundle.Bundle) (Result, error) 
 			return Result{}, fmt.Errorf("engine: semantic review: %w", err)
 		}
 		for _, f := range found {
+			if err := f.Validate(); err != nil {
+				continue
+			}
 			set.Add(f)
+		}
+	}
+
+	cur := set.Items()
+	for i := range cur {
+		if !evidenceMatches(cur[i], source) {
+			cur[i].Unverified = true
 		}
 	}
 
@@ -104,11 +134,11 @@ func (e *Engine) Finalize(ctx context.Context, b bundle.Bundle) (Result, error) 
 	if err != nil {
 		return Result{}, err
 	}
-	cur := findings.Lifecycle(prev.Findings, set.Items(), b.RunID)
-	resolved := findings.Compare(prev.Findings, cur)
-	persisted := Persist(e.opts.Config, cur)
+	tracked := findings.Lifecycle(prev.Findings, cur, b.RunID)
+	resolved := findings.Compare(prev.Findings, tracked)
+	persisted := Persist(e.opts.Config, tracked)
 	if persisted && e.opts.Config.Mode != config.ModeStateless {
-		if err := e.opts.Store.Save(ctx, store.State{RunID: b.RunID, Findings: findings.MergeTracking(cur, resolved)}); err != nil {
+		if err := e.opts.Store.Save(ctx, store.State{RunID: b.RunID, Findings: findings.MergeTracking(tracked, resolved)}); err != nil {
 			return Result{}, err
 		}
 	}
@@ -122,11 +152,50 @@ func (e *Engine) Finalize(ctx context.Context, b bundle.Bundle) (Result, error) 
 			Base:           b.Base,
 			Head:           b.Head,
 			Generated:      e.opts.Now().UTC(),
-			Findings:       cur,
+			Findings:       tracked,
 			Resolved:       resolved,
-			BlockThreshold: threshold(b.BlockThreshold),
+			BlockThreshold: threshold(e.opts.Config.Review.BlockThreshold),
 		},
-		Findings:  cur,
+		Findings:  tracked,
 		Persisted: persisted,
 	}, nil
+}
+
+// sourceIndex maps normalized paths to the bundled file contents.
+func sourceIndex(files []reviewers.FileContent) map[string]string {
+	idx := make(map[string]string, len(files))
+	for _, f := range files {
+		idx[evidenceKey(f.Path)] = f.Content
+	}
+	return idx
+}
+
+func evidenceKey(path string) string {
+	p := strings.TrimSpace(strings.ReplaceAll(path, "\\", "/"))
+	p = strings.TrimPrefix(p, "./")
+	p = strings.TrimPrefix(p, "/")
+	return strings.ToLower(p)
+}
+
+// evidenceMatches reports whether a finding cites a file present in the
+// reviewed source, with an in-range line and (when given) a snippet that occurs
+// in that file. Findings that fail this are marked unverified.
+func evidenceMatches(f findings.Finding, source map[string]string) bool {
+	key := evidenceKey(f.Evidence.File)
+	if key == "" {
+		return false
+	}
+	content, ok := source[key]
+	if !ok {
+		return false
+	}
+	if f.Evidence.Line > 0 {
+		if f.Evidence.Line > strings.Count(content, "\n")+1 {
+			return false
+		}
+	}
+	if snippet := strings.TrimSpace(f.Evidence.Snippet); snippet != "" && !strings.Contains(content, snippet) {
+		return false
+	}
+	return true
 }

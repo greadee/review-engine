@@ -67,6 +67,15 @@ issue="${REVIEW_INPUT_ISSUE:-}"
 require_uint pr "$pr"
 require_uint issue "$issue"
 
+expect_repository="${REVIEW_INPUT_EXPECT_REPOSITORY:-}"
+expect_pr="${REVIEW_INPUT_EXPECT_PR:-}"
+expect_head="${REVIEW_INPUT_EXPECT_HEAD:-}"
+expect_profile="${REVIEW_INPUT_EXPECT_PROFILE:-}"
+require_uint expect-pr "$expect_pr"
+if [ -n "$expect_profile" ]; then
+  require_enum expect-profile "$expect_profile" pr issue sprint audit impact
+fi
+
 config="${REVIEW_INPUT_CONFIG:-revu.yaml}"
 base="${REVIEW_INPUT_BASE:-origin/main}"
 head="${REVIEW_INPUT_HEAD:-HEAD}"
@@ -99,13 +108,15 @@ fi
 
 case "$phase" in
   collect)
-    "$revu" collect \
-      --config "$config" \
-      --profile "$profile" \
-      --base "$base" \
-      --head "$head" \
-      --repository "$repository" \
-      --out "$bundle"
+    args=(collect
+      --config "$config"
+      --profile "$profile"
+      --base "$base"
+      --head "$head"
+      --repository "$repository"
+      --out "$bundle")
+    [ -n "$pr" ] && args+=(--pr "$pr")
+    "$revu" "${args[@]}"
     exit $?
     ;;
   finalize)
@@ -116,6 +127,10 @@ case "$phase" in
       --out summary.md
       --json findings.json)
     [ -n "$pr" ] && args+=(--pr "$pr")
+    [ -n "$expect_repository" ] && args+=(--expect-repository "$expect_repository")
+    [ -n "$expect_pr" ] && args+=(--expect-pr "$expect_pr")
+    [ -n "$expect_head" ] && args+=(--expect-head "$expect_head")
+    [ -n "$expect_profile" ] && args+=(--expect-profile "$expect_profile")
     [ "$publish" = "true" ] && args+=(--publish)
     [ "$comment" = "true" ] && args+=(--comment)
     [ "$block" = "true" ] || args+=(--no-block)

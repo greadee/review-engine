@@ -61,10 +61,14 @@ func (r Run) Counts() map[findings.Severity]int {
 	return counts
 }
 
-// Blocking returns findings at or above the block threshold.
+// Blocking returns findings at or above the block threshold that cite verified
+// evidence. Unverified findings never block (they appear under Non-Blocking).
 func (r Run) Blocking() []findings.Finding {
 	var out []findings.Finding
 	for _, f := range r.Findings {
+		if f.Unverified {
+			continue
+		}
 		if f.Severity.Rank() >= 0 && f.Severity.Rank() <= r.BlockThreshold.Rank() {
 			out = append(out, f)
 		}
@@ -72,13 +76,15 @@ func (r Run) Blocking() []findings.Finding {
 	return out
 }
 
-// NonBlocking returns findings below the block threshold.
+// NonBlocking returns findings below the block threshold, plus any unverified
+// finding (which is reported but cannot block).
 func (r Run) NonBlocking() []findings.Finding {
 	var out []findings.Finding
 	for _, f := range r.Findings {
-		if f.Severity.Rank() >= 0 && f.Severity.Rank() > r.BlockThreshold.Rank() {
-			out = append(out, f)
+		if !f.Unverified && f.Severity.Rank() >= 0 && f.Severity.Rank() <= r.BlockThreshold.Rank() {
+			continue
 		}
+		out = append(out, f)
 	}
 	return out
 }
@@ -167,7 +173,7 @@ func writeFindingsBrief(b *strings.Builder, fs []findings.Finding, max int) {
 			fmt.Fprintf(b, "- _…and %d more_\n", len(fs)-max)
 			break
 		}
-		fmt.Fprintf(b, "- **[%s] %s** — `%s`\n", f.Severity, f.Title, loc(f))
+		fmt.Fprintf(b, "- **[%s] %s**%s — `%s`\n", f.Severity, sanitize(f.Title), unverifiedNote(f), sanitize(loc(f)))
 	}
 }
 
@@ -213,17 +219,55 @@ func writeFindings(b *strings.Builder, fs []findings.Finding) {
 			loc = fmt.Sprintf("%s:%d", loc, f.Evidence.Line)
 		}
 		if loc != "" {
-			fmt.Fprintf(b, "- **[%s] %s** — `%s`\n", f.Severity, f.Title, loc)
+			fmt.Fprintf(b, "- **[%s] %s**%s — `%s`\n", f.Severity, sanitize(f.Title), unverifiedNote(f), sanitize(loc))
 		} else {
-			fmt.Fprintf(b, "- **[%s] %s**\n", f.Severity, f.Title)
+			fmt.Fprintf(b, "- **[%s] %s**%s\n", f.Severity, sanitize(f.Title), unverifiedNote(f))
 		}
 		if f.Impact != "" {
-			fmt.Fprintf(b, "  - Impact: %s\n", f.Impact)
+			fmt.Fprintf(b, "  - Impact: %s\n", sanitize(f.Impact))
 		}
 		if f.Recommendation != "" {
-			fmt.Fprintf(b, "  - Recommendation: %s\n", f.Recommendation)
+			fmt.Fprintf(b, "  - Recommendation: %s\n", sanitize(f.Recommendation))
 		}
 	}
+}
+
+// unverifiedNote labels a finding whose evidence could not be confirmed.
+func unverifiedNote(f findings.Finding) string {
+	if f.Unverified {
+		return " _(evidence unverified)_"
+	}
+	return ""
+}
+
+// sanitize neutralizes untrusted text before it is rendered into a comment or
+// archive document: it strips control characters, escapes HTML, and defuses
+// @-mentions so a hostile bundle or model response cannot inject markup or ping
+// arbitrary users.
+func sanitize(s string) string {
+	s = strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\t':
+			return r
+		case r < 0x20, r == 0x7f:
+			return -1
+		default:
+			return r
+		}
+	}, s)
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, "@", "@\u200b")
+	return truncateRunes(s, 4000)
+}
+
+func truncateRunes(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
 }
 
 func countsString(counts map[findings.Severity]int) string {
