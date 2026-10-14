@@ -1,0 +1,9 @@
+{
+  "profile": "pr",
+  "clean": false,
+  "adversarial": false,
+  "notes": "Off-by-one loop bound reads one past the end of the slice.",
+  "expected": [
+    {"file": "svc.go", "anchor": "off-by-one-total", "classification": "Bug", "severity": "P1"}
+  ]
+}

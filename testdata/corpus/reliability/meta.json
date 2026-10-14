@@ -1,0 +1,9 @@
+{
+  "profile": "pr",
+  "clean": false,
+  "adversarial": false,
+  "notes": "Error from ReadAll is discarded, hiding truncated reads.",
+  "expected": [
+    {"file": "io.go", "anchor": "swallowed-error", "classification": "Reliability", "severity": "P2"}
+  ]
+}

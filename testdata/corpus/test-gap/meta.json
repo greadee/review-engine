@@ -1,0 +1,9 @@
+{
+  "profile": "pr",
+  "clean": false,
+  "adversarial": false,
+  "notes": "New production function with no accompanying test.",
+  "expected": [
+    {"file": "calc.go", "anchor": "missing-divide-test", "classification": "Test", "severity": "P2"}
+  ]
+}

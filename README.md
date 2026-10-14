@@ -286,6 +286,19 @@ go test ./...
 gofmt -l .
 ```
 
+### Corpus & accuracy
+
+`testdata/corpus/` is a seeded PR corpus (correctness, security, reliability,
+test-gap, clean, and prompt-injection fixtures) with agreed release thresholds.
+Run it hermetically with the deterministic oracle provider:
+
+```bash
+revu eval --corpus testdata/corpus --check
+```
+
+See [`docs/corpus.md`](docs/corpus.md) for the fixtures, metrics, thresholds, and
+how to run the optional pinned-model evaluation.
+
 ## Status
 
 Stages 0–5: the engine runs the `pr`, `audit`, and `issue` profiles end-to-end with

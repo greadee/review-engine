@@ -32,3 +32,8 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+      - name: Corpus evaluation
+        run: |
+          go build -o revu ./cmd/revu
+          ./revu eval --corpus testdata/corpus --check

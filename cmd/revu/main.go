@@ -18,6 +18,7 @@ import (
 	"github.com/greadee/review-engine/internal/ci"
 	"github.com/greadee/review-engine/internal/config"
 	"github.com/greadee/review-engine/internal/engine"
+	"github.com/greadee/review-engine/internal/eval"
 	"github.com/greadee/review-engine/internal/findings"
 	"github.com/greadee/review-engine/internal/issues"
 	"github.com/greadee/review-engine/internal/profiles"
@@ -64,6 +65,8 @@ func main() {
 		err = reconcile(os.Args[2:])
 	case "doctor":
 		err = doctor(os.Args[2:])
+	case "eval":
+		err = evalCorpus(os.Args[2:])
 	case "version":
 		fmt.Println(version)
 	case "-h", "--help", "help":
@@ -95,6 +98,7 @@ Usage:
   revu doctor             check the environment and configuration
   revu file-issue         create one findings issue from a findings file
   revu reconcile          review issues and close/keep-open via their criteria
+  revu eval               run the seeded PR corpus and report accuracy
   revu version            print version
 
 Run "revu run -h" for flags.
@@ -1150,6 +1154,65 @@ func firstNonEmpty(a, b string) string {
 		return a
 	}
 	return b
+}
+
+// evalCorpus runs the seeded PR corpus through the review pipeline. The default
+// oracle provider is deterministic (no network); a pinned model can be selected
+// for the optional evaluation.
+func evalCorpus(args []string) error {
+	fs := flag.NewFlagSet("eval", flag.ContinueOnError)
+	corpus := fs.String("corpus", "testdata/corpus", "corpus directory")
+	out := fs.String("out", "", "write the results Markdown to a file")
+	providerName := fs.String("provider", "oracle", "provider: oracle | fake | openai-compatible")
+	model := fs.String("model", "", "model id for a provider-backed evaluation")
+	check := fs.Bool("check", false, "exit non-zero unless the corpus meets the release thresholds")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	fixtures, err := eval.Load(*corpus)
+	if err != nil {
+		return err
+	}
+	var prov provider.Provider
+	switch *providerName {
+	case "", "oracle":
+		prov = eval.Oracle{}
+	case "fake":
+		prov = &provider.Fake{Responses: []string{`{"findings":[]}`}}
+	default:
+		key := os.Getenv("REVIEW_PROVIDER_API_KEY")
+		if key == "" {
+			return fmt.Errorf("no API key: set REVIEW_PROVIDER_API_KEY for provider %s", *providerName)
+		}
+		prov, err = provider.New(*providerName, provider.Config{
+			BaseURL: os.Getenv("REVIEW_PROVIDER_BASE_URL"),
+			APIKey:  key,
+			Model:   *model,
+		})
+		if err != nil {
+			return err
+		}
+	}
+	report, err := eval.Run(context.Background(), fixtures, prov)
+	if err != nil {
+		return err
+	}
+	md := report.Markdown()
+	if *out != "" {
+		if err := os.WriteFile(*out, []byte(md), 0o644); err != nil {
+			return err
+		}
+	} else {
+		fmt.Print(md)
+	}
+	if *check {
+		c := report.Counts()
+		if c.P0P1Recall() < 1.0 || c.SeverityAccuracy() < 1.0 || c.FalsePositives > 0 || c.InvalidEvidence > 0 || c.CleanFindings > 0 {
+			return fmt.Errorf("corpus does not meet release thresholds (recall=%.2f severity=%.2f fp=%d invalid=%d clean=%d)",
+				c.P0P1Recall(), c.SeverityAccuracy(), c.FalsePositives, c.InvalidEvidence, c.CleanFindings)
+		}
+	}
+	return nil
 }
 
 func splitRepo(s string) (string, string, error) {

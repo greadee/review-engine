@@ -1,0 +1,7 @@
+{
+  "profile": "pr",
+  "clean": true,
+  "adversarial": false,
+  "notes": "Correct change with no defects; must produce no findings and be fully covered.",
+  "expected": []
+}
