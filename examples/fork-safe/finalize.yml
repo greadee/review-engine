@@ -27,7 +27,7 @@ jobs:
           name: revu-bundle
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
-      - uses: greadee/review-engine@main
+      - uses: greadee/review-engine@47429e8c9cdf23f75a5cce5c239cdd36de53bdc3
         with:
           phase: finalize
           repository: ${{ github.event.workflow_run.repository.full_name }}

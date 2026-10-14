@@ -4,7 +4,7 @@
 #
 #   jobs:
 #     review:
-#       uses: greadee/review-engine/.github/workflows/review.yml@main
+#       uses: greadee/review-engine/.github/workflows/review.yml@47429e8c9cdf23f75a5cce5c239cdd36de53bdc3
 #       with:
 #         profile: pr
 #         base: origin/main
@@ -67,7 +67,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: greadee/review-engine@main
+      - uses: greadee/review-engine@47429e8c9cdf23f75a5cce5c239cdd36de53bdc3
         with:
           phase: collect
           profile: ${{ inputs.profile }}
@@ -93,7 +93,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: revu-bundle
-      - uses: greadee/review-engine@main
+      - uses: greadee/review-engine@47429e8c9cdf23f75a5cce5c239cdd36de53bdc3
         with:
           phase: finalize
           model: ${{ inputs.model }}

@@ -47,6 +47,21 @@ The action builds the engine, runs the selected profile, archives findings to th
 [`examples/review.yml`](examples/review.yml) and
 [`examples/issue-review.yml`](examples/issue-review.yml).
 
+### Versioning and pinning
+
+`greadee/review-engine@v1` is a maintained major tag that always points at the
+latest reviewed v1 release. For maximum reproducibility, pin to a reviewed full
+commit SHA instead:
+
+```yaml
+- uses: greadee/review-engine@<40-char-commit-sha>
+```
+
+The examples and the reusable workflow are pinned to full commit SHAs. `@main`
+(the moving branch) must not be used for the action in a job that holds a
+provider key or a write-capable token. CI verifies that every documented
+reference resolves and is pinned, and that the `v1` tag is published.
+
 ## Issue review
 
 The `issue` profile extracts acceptance criteria (checkboxes, or list items under
