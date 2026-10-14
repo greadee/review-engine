@@ -370,11 +370,23 @@ func buildProvider(cfg config.Config, dryRun bool) (provider.Provider, error) {
 	if cfg.Provider.APIKey() == "" {
 		return nil, fmt.Errorf("no API key: set %s (or use --dry-run)", defaultKeyEnv(cfg))
 	}
+	// Refuse to attach the credential to an endpoint that trusted configuration
+	// has not allowlisted. A repository's revu.yaml is untrusted in the
+	// secret-bearing job, so its provider.baseUrl must not redirect the key.
+	if err := checkProviderEndpoint(cfg); err != nil {
+		return nil, err
+	}
 	return provider.New(cfg.Provider.Name, provider.Config{
 		BaseURL: cfg.Provider.BaseURL,
 		APIKey:  cfg.Provider.APIKey(),
 		Model:   cfg.Provider.Model,
 	})
+}
+
+// checkProviderEndpoint enforces the trusted provider-endpoint allowlist.
+func checkProviderEndpoint(cfg config.Config) error {
+	allowed := append(provider.TrustedBaseURLs(), config.GlobalProviderBaseURLs()...)
+	return provider.CheckEndpoint(cfg.Provider.BaseURL, allowed)
 }
 
 func defaultKeyEnv(cfg config.Config) string {

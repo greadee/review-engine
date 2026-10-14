@@ -43,6 +43,8 @@ require_enum profile "$profile" pr issue sprint audit impact
 
 provider="${REVIEW_INPUT_PROVIDER:-openai-compatible}"
 model="${REVIEW_INPUT_MODEL:-}"
+base_url="${REVIEW_INPUT_BASE_URL:-}"
+allowed_base_urls="${REVIEW_INPUT_ALLOWED_BASE_URLS:-}"
 
 semantic="${REVIEW_INPUT_SEMANTIC:-true}"
 publish="${REVIEW_INPUT_PUBLISH:-true}"
@@ -85,6 +87,11 @@ export REVIEW_BLOCK_THRESHOLD="$threshold"
 export REVIEW_STORE_SQLITE="$store_sqlite"
 export REVIEW_ISSUE_AUTO_CLOSE="$close"
 export REVIEW_ISSUE_AUTO_REOPEN="$reopen"
+
+# Provider endpoint: pin the trusted endpoint and allowlist from workflow
+# inputs so a pull request cannot redirect the key through revu.yaml.
+[ -n "$base_url" ] && export REVIEW_PROVIDER_BASE_URL="$base_url"
+[ -n "$allowed_base_urls" ] && export REVIEW_PROVIDER_ALLOWED_BASE_URLS="$allowed_base_urls"
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   echo "summary=summary.md" >> "$GITHUB_OUTPUT"

@@ -4,9 +4,11 @@
 # This is the whole integration: one `uses:` step. Everything else is
 # configuration in revu.yaml (see revu.example.yaml).
 #
-# Fork note: `pull_request` from a fork cannot read secrets. For untrusted forks,
-# run the model call in a separate `workflow_run` job as described in
-# docs/adr/0003-security-model.md; same-repository PRs can use this directly.
+# Security note: a same-repository PR can edit revu.yaml, including
+# provider.baseUrl. Pin the endpoint and allowlist it from the workflow (below)
+# so the key cannot be redirected, or use the two-phase fork-safe flow in
+# examples/fork-safe/ — which is the recommended integration for any untrusted
+# PR, fork or not.
 
 name: Review
 
@@ -30,6 +32,8 @@ jobs:
         with:
           profile: pr
           model: gpt-4o-mini
+          base-url: https://api.openai.com/v1
+          allowed-base-urls: https://api.openai.com/v1
           base: origin/${{ github.base_ref }}
           head: ${{ github.sha }}
           pr: ${{ github.event.pull_request.number }}

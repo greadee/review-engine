@@ -67,10 +67,35 @@ Closure gating is comment-only by default. Additional behavior is opt-in via
 
 Unmet criteria always leave the issue open.
 
-> Fork PRs cannot access secrets. For untrusted forks, run the collect phase
-> without secrets and finalize in a separate secret-bearing job. See
+> Fork PRs cannot access secrets. For untrusted forks — and to keep a
+> same-repository PR from modifying `revu.yaml` — run the collect phase without
+> secrets and finalize in a separate secret-bearing job. See
 > [`docs/adr/0005-two-phase-review.md`](docs/adr/0005-two-phase-review.md) and
 > [`examples/fork-safe/`](examples/fork-safe/).
+
+## Provider endpoint trust
+
+The provider sends `REVIEW_PROVIDER_API_KEY` as a Bearer token to
+`provider.baseUrl`, which is configurable in `revu.yaml`. A same-repository pull
+request can edit that file, so the secret-bearing job must not trust it. The
+engine therefore refuses to attach the key to any endpoint that trusted,
+workflow-controlled configuration has not allowlisted:
+
+- the built-in default `https://api.openai.com/v1` is always allowed;
+- additional endpoints must be listed in the `REVIEW_PROVIDER_ALLOWED_BASE_URLS`
+  environment variable (the `allowed-base-urls` action input) or in the **global**
+  config (`provider.allowedBaseUrls`). The repository's `revu.yaml` is ignored
+  for this decision.
+
+Pin the endpoint from the workflow too, so a PR cannot change it at all:
+
+```yaml
+- uses: greadee/review-engine@v1
+  with:
+    base-url: https://api.openai.com/v1
+    allowed-base-urls: https://api.openai.com/v1
+```
+
 
 ## Fork-safe CI
 

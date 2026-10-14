@@ -33,5 +33,7 @@ jobs:
           repository: ${{ github.event.workflow_run.repository.full_name }}
           pr: ${{ github.event.workflow_run.pull_requests[0].number }}
           model: gpt-4o-mini
+          base-url: https://api.openai.com/v1
+          allowed-base-urls: https://api.openai.com/v1
           bundle: bundle.json
           api-key: ${{ secrets.REVIEW_PROVIDER_API_KEY }}

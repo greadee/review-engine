@@ -27,6 +27,14 @@ inputs:
     description: "Model id to use for semantic review"
     required: false
     default: ""
+  base-url:
+    description: "Trusted provider endpoint (overrides revu.yaml; workflow-controlled)"
+    required: false
+    default: ""
+  allowed-base-urls:
+    description: "Comma-separated trusted provider endpoints allowed to receive the key"
+    required: false
+    default: ""
   semantic:
     description: "Run the model-backed semantic pass (true|false)"
     required: false
@@ -121,6 +129,8 @@ runs:
         REVIEW_INPUT_PROFILE: ${{ inputs.profile }}
         REVIEW_INPUT_PROVIDER: ${{ inputs.provider }}
         REVIEW_INPUT_MODEL: ${{ inputs.model }}
+        REVIEW_INPUT_BASE_URL: ${{ inputs.base-url }}
+        REVIEW_INPUT_ALLOWED_BASE_URLS: ${{ inputs.allowed-base-urls }}
         REVIEW_INPUT_SEMANTIC: ${{ inputs.semantic }}
         REVIEW_INPUT_BASE: ${{ inputs.base }}
         REVIEW_INPUT_HEAD: ${{ inputs.head }}

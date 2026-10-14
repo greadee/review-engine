@@ -75,6 +75,11 @@ type ProviderConfig struct {
 	// APIKeyEnv names the environment variable holding the API key. When
 	// empty, REVIEW_PROVIDER_API_KEY is used.
 	APIKeyEnv string `yaml:"apiKeyEnv"`
+	// AllowedBaseURLs lists additional provider endpoints that may receive a
+	// credential. Only the value in the *global* config is trusted (see
+	// GlobalProviderBaseURLs); a repository's revu.yaml is ignored for this
+	// decision because a pull request can modify it.
+	AllowedBaseURLs []string `yaml:"allowedBaseUrls"`
 }
 
 // ReviewConfig controls analysis passes.
@@ -217,6 +222,27 @@ func (c Config) Validate() error {
 		}
 	}
 	return fmt.Errorf("config: persist.mode %q must be one of %s", c.Persist.Mode, strings.Join(PersistModes, ", "))
+}
+
+// GlobalProviderBaseURLs returns the provider endpoints trusted to receive a
+// credential from the global config. The repository's own revu.yaml is
+// deliberately ignored: a pull request can modify it, while the global config
+// lives outside the checkout. Combine with provider.TrustedBaseURLs (the
+// built-in default and REVIEW_PROVIDER_ALLOWED_BASE_URLS).
+func GlobalProviderBaseURLs() []string {
+	global := GlobalPath()
+	if global == "" {
+		return nil
+	}
+	data, err := os.ReadFile(global)
+	if err != nil {
+		return nil
+	}
+	var g Config
+	if err := yaml.Unmarshal(data, &g); err != nil {
+		return nil
+	}
+	return g.Provider.AllowedBaseURLs
 }
 
 // GlobalPath returns the global config path, or "" when none is configured.
