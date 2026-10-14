@@ -51,21 +51,37 @@ The action builds the engine, runs the selected profile, archives findings to th
 
 The `issue` profile extracts acceptance criteria (checkboxes, or list items under
 an acceptance/criteria heading) from an issue body and reports the ones that are
-not satisfied.
+**not independently verified**.
 
-- On an **open** issue, unmet criteria are P3 (work in progress).
-- On a **closed** issue, unmet criteria are P1 (the closure is unsupported).
+A checkbox is a claim, not evidence. A criterion counts as satisfied only when it
+cites independently checkable evidence:
+
+- a repository path that exists (a linked test or reviewed change), e.g.
+  `` `internal/auth/login_test.go` ``;
+- a PR/issue/commit reference (`#123` or a commit SHA); or
+- an explicit `(verified)` / `(approved)` reviewer marker, or the issue carrying
+  the configured `issueReview.verifiedLabel`.
+
+Consequences:
+
+- A checked box with no evidence is reported as **checked but unverified**, and
+  never treated as delivered work.
+- A delivered criterion left unticked is still satisfied if it carries evidence.
+- On an **open** issue, unverified criteria are P3; on a **closed** issue,
+  unchecked criteria are P1 and checked-but-unverified criteria are P2.
 
 Closure gating is comment-only by default. Additional behavior is opt-in via
-`revu.yaml` (`issueReview.autoClose` / `autoReopen` / `blockMerge`) or flags:
+`revu.yaml` (`issueReview.autoClose` / `autoReopen` / `blockMerge` /
+`verifiedLabel`) or flags:
 
-- `--close` closes an open issue once **every** criterion is met (good-to-go);
-  an issue with no criteria is never auto-closed.
-- `--reopen` reopens a closed issue that still has unmet criteria.
-- `--block` fails the step when criteria are unmet or absent (use as a required
-  check).
+- `--close` closes an open issue only when **every** criterion is independently
+  verified (or explicitly approved); an issue with no criteria is never
+  auto-closed.
+- `--reopen` reopens a closed issue that still has unverified criteria.
+- `--block` fails the step when criteria lack verified evidence or are absent
+  (use as a required check). Checklist state alone never passes the check.
 
-Unmet criteria always leave the issue open.
+Criteria without verified evidence always leave the issue open.
 
 > Fork PRs cannot access secrets. For untrusted forks — and to keep a
 > same-repository PR from modifying `revu.yaml` — run the collect phase without

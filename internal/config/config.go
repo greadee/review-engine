@@ -132,11 +132,15 @@ type PersistConfig struct {
 
 // IssueReviewConfig controls issue-close gating.
 type IssueReviewConfig struct {
-	// AutoClose closes an issue when all acceptance criteria are met.
+	// AutoClose closes an issue when all acceptance criteria are independently
+	// verified (checklist state alone is not sufficient).
 	AutoClose   bool `yaml:"autoClose"`
 	AutoReopen  bool `yaml:"autoReopen"`
 	BlockMerge  bool `yaml:"blockMerge"`
 	CommentOnly bool `yaml:"commentOnly"`
+	// VerifiedLabel names a label that counts as explicit reviewer approval,
+	// allowing closure regardless of per-criterion evidence. Empty disables it.
+	VerifiedLabel string `yaml:"verifiedLabel"`
 }
 
 // Default returns the built-in defaults.
@@ -364,6 +368,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("REVIEW_ISSUE_BLOCK_MERGE"); v != "" {
 		cfg.IssueReview.BlockMerge = parseBool(v, cfg.IssueReview.BlockMerge)
+	}
+	if v := os.Getenv("REVIEW_ISSUE_VERIFIED_LABEL"); v != "" {
+		cfg.IssueReview.VerifiedLabel = v
 	}
 	if v := os.Getenv("REVIEW_STORE_SQLITE"); v != "" {
 		cfg.Store.SQLite = parseBool(v, cfg.Store.SQLite)

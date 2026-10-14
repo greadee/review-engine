@@ -106,7 +106,7 @@ func TestCollectCriteriaFromDocs(t *testing.T) {
 		t.Fatalf("expected 2 criteria from the doc, got %+v", criteria)
 	}
 	v := EvaluateWith(vcs.Issue{Number: 1, State: "open", Body: body}, read)
-	if !v.HasCriteria || v.Met != 1 || v.Unmet != 1 || v.GoodToGo() {
+	if !v.HasCriteria || v.Verified != 0 || v.Unmet != 2 || v.GoodToGo() {
 		t.Fatalf("unexpected verdict: %+v", v)
 	}
 	// Without a reader, only the body is consulted (none here).
@@ -117,21 +117,71 @@ func TestCollectCriteriaFromDocs(t *testing.T) {
 
 func TestEvaluate(t *testing.T) {
 	v := EvaluateWith(vcs.Issue{State: "open", Body: body}, nil)
-	if !v.HasCriteria || v.Criteria != 4 || v.Met != 2 || v.Unmet != 2 {
+	if !v.HasCriteria || v.Criteria != 4 || v.Checked != 2 || v.Verified != 0 || v.Unmet != 4 {
 		t.Fatalf("unexpected verdict: %+v", v)
 	}
 	if v.GoodToGo() {
-		t.Fatal("issue with unmet criteria must not be good-to-go")
+		t.Fatal("issue with unverified criteria must not be good-to-go")
 	}
 
-	gtg := EvaluateWith(vcs.Issue{State: "open", Body: "## Acceptance criteria\n\n- [x] done\n- [x] also done\n"}, nil)
-	if !gtg.GoodToGo() || gtg.Unmet != 0 {
-		t.Fatalf("expected good-to-go: %+v", gtg)
+	// Only independently evidenced criteria make an issue good-to-go.
+	gtg := EvaluateWith(vcs.Issue{State: "open", Body: "## Acceptance criteria\n\n- [x] done ref #12\n- [x] also done ref #13\n"}, nil)
+	if !gtg.GoodToGo() || gtg.Unmet != 0 || gtg.Verified != 2 {
+		t.Fatalf("expected good-to-go with evidence: %+v", gtg)
 	}
 
 	none := EvaluateWith(vcs.Issue{Body: "no list here"}, nil)
 	if none.HasCriteria || none.GoodToGo() {
 		t.Fatalf("no criteria must not be good-to-go: %+v", none)
+	}
+}
+
+// TestCheckedButUnverifiedNotGoodToGo covers the "checked-but-undelivered"
+// case: ticking a box is a claim, not evidence.
+func TestCheckedButUnverifiedNotGoodToGo(t *testing.T) {
+	issue := vcs.Issue{Number: 5, State: "closed", Body: "## Acceptance criteria\n\n- [x] shipped the feature\n"}
+	v := EvaluateWith(issue, nil)
+	if v.GoodToGo() {
+		t.Fatalf("checked criterion must not be good-to-go without evidence: %+v", v)
+	}
+	if v.Checked != 1 || v.Verified != 0 || v.Unverified != 1 || v.Unmet != 1 {
+		t.Fatalf("unexpected verdict: %+v", v)
+	}
+	got := FindingsWith(issue, nil)
+	if len(got) != 1 || got[0].Severity != findings.P2 {
+		t.Fatalf("expected one P2 unverified-criterion finding, got %+v", got)
+	}
+}
+
+// TestDeliveredButUncheckedIsVerified covers the "delivered-but-unchecked"
+// case: independent evidence satisfies a criterion even if the box is unticked.
+func TestDeliveredButUncheckedIsVerified(t *testing.T) {
+	read := func(p string) (string, bool) {
+		if p == "internal/auth/login_test.go" {
+			return "package auth", true
+		}
+		return "", false
+	}
+	body := "## Acceptance criteria\n\n- [ ] login rejects bad passwords — `internal/auth/login_test.go`\n"
+	v := EvaluateWithOptions(vcs.Issue{State: "open", Body: body}, read, Options{})
+	if !v.GoodToGo() || v.Verified != 1 || v.Unmet != 0 {
+		t.Fatalf("evidenced (unchecked) criterion should be verified: %+v", v)
+	}
+	if got := FindingsWith(vcs.Issue{Body: body}, read); len(got) != 0 {
+		t.Fatalf("verified criterion must not be reported: %+v", got)
+	}
+}
+
+// TestExplicitApprovalOverrides allows a reviewer label to stand in for
+// per-criterion evidence.
+func TestExplicitApprovalOverrides(t *testing.T) {
+	issue := vcs.Issue{Number: 9, State: "open", Body: "## Acceptance criteria\n\n- [x] shipped\n"}
+	if EvaluateWith(issue, nil).GoodToGo() {
+		t.Fatal("without approval the issue must not be good-to-go")
+	}
+	v := EvaluateWithOptions(issue, nil, Options{Approved: true})
+	if !v.GoodToGo() {
+		t.Fatalf("explicit approval should allow closure: %+v", v)
 	}
 }
 

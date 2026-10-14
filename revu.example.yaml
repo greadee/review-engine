@@ -53,9 +53,10 @@ profiles:
 
 issueReview:
   commentOnly: true  # default
-  autoClose: false   # close an issue when every criterion is met
-  autoReopen: false  # reopen a closed issue that still has unmet criteria
-  blockMerge: false  # fail the check when criteria are unmet
+  autoClose: false   # close an issue when every criterion is independently verified
+  autoReopen: false  # reopen a closed issue that still has unverified criteria
+  blockMerge: false  # fail the check when criteria lack verified evidence
+  verifiedLabel: ""  # e.g. "revu-verified": a label that counts as explicit reviewer approval
 
 ignore:
   - "vendor/**"

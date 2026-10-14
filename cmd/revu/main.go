@@ -648,7 +648,8 @@ func issueReview(args []string) error {
 		}
 	}
 
-	verdict := issues.EvaluateWith(issue, reader)
+	approved := cfg.IssueReview.VerifiedLabel != "" && hasLabel(issue.Labels, cfg.IssueReview.VerifiedLabel)
+	verdict := issues.EvaluateWithOptions(issue, reader, issues.Options{Approved: approved})
 	closed := strings.EqualFold(issue.State, "closed")
 	if *comment {
 		marker := fmt.Sprintf("<!-- revu:run=%s -->", res.Run.ID)
@@ -656,12 +657,13 @@ func issueReview(args []string) error {
 			return err
 		}
 	}
-	// Good to go: close the issue when every criterion is met.
+	// Good to go: close the issue only when every criterion is independently
+	// verified (or a reviewer explicitly approved it).
 	if verdict.GoodToGo() && doClose && !closed {
 		if err := gh.SetIssueState(ctx, owner, name, *issueNum, "closed"); err != nil {
 			return err
 		}
-		fmt.Printf("closed issue #%d (%d/%d criteria met)\n", *issueNum, verdict.Met, verdict.Criteria)
+		fmt.Printf("closed issue #%d (%d/%d criteria verified)\n", *issueNum, verdict.Verified, verdict.Criteria)
 	}
 	// Not done: keep the issue open (reopening a closed one when configured).
 	if verdict.Unmet > 0 {
@@ -669,15 +671,16 @@ func issueReview(args []string) error {
 			if err := gh.SetIssueState(ctx, owner, name, *issueNum, "open"); err != nil {
 				return err
 			}
-			fmt.Printf("reopened issue #%d (%d unmet criteria)\n", *issueNum, verdict.Unmet)
+			fmt.Printf("reopened issue #%d (%d unverified criteria)\n", *issueNum, verdict.Unmet)
 		}
 	}
-	// Close gate: fail the run (e.g. as a required check) when work is unmet.
-	if *block && verdict.Unmet > 0 {
-		return fmt.Errorf("issue #%d has %d unmet acceptance criteria", *issueNum, verdict.Unmet)
-	}
-	if *block && !verdict.HasCriteria {
-		return fmt.Errorf("issue #%d has no acceptance criteria to verify", *issueNum)
+	// Close gate: fail the run (e.g. as a required check) when work is not
+	// independently verified. Checklist state alone never passes the check.
+	if *block && !verdict.GoodToGo() {
+		if !verdict.HasCriteria {
+			return fmt.Errorf("issue #%d has no acceptance criteria to verify", *issueNum)
+		}
+		return fmt.Errorf("issue #%d has %d criteria without verified evidence (%d checked but unverified)", *issueNum, verdict.Unmet, verdict.Unverified)
 	}
 	return nil
 }
@@ -811,6 +814,7 @@ issueReview:
   autoClose: false
   autoReopen: false
   blockMerge: false
+  verifiedLabel: ""   # a label that counts as explicit reviewer approval
 
 ignore:
   - "vendor/**"
@@ -937,7 +941,8 @@ func reconcile(args []string) error {
 		if err != nil {
 			return fmt.Errorf("issue #%d: %w", n, err)
 		}
-		verdict := issues.EvaluateWith(issue, reader)
+		approved := cfg.IssueReview.VerifiedLabel != "" && hasLabel(issue.Labels, cfg.IssueReview.VerifiedLabel)
+		verdict := issues.EvaluateWithOptions(issue, reader, issues.Options{Approved: approved})
 		isClosed := strings.EqualFold(issue.State, "closed")
 
 		// A findings-gated issue stays open when the review found problems in
@@ -969,17 +974,17 @@ func reconcile(args []string) error {
 						return err
 					}
 				}
-				fmt.Printf("#%d closed (%d/%d criteria met)\n", n, verdict.Met, verdict.Criteria)
+				fmt.Printf("#%d closed (%d/%d criteria verified)\n", n, verdict.Verified, verdict.Criteria)
 				closedN++
 			} else {
-				fmt.Printf("#%d good to go (%d/%d criteria met)\n", n, verdict.Met, verdict.Criteria)
+				fmt.Printf("#%d good to go (%d/%d criteria verified)\n", n, verdict.Verified, verdict.Criteria)
 				openN++
 			}
 		case verdict.GoodToGo():
-			fmt.Printf("#%d remains closed (good to go, %d/%d)\n", n, verdict.Met, verdict.Criteria)
+			fmt.Printf("#%d remains closed (good to go, %d/%d)\n", n, verdict.Verified, verdict.Criteria)
 			closedN++
 		default:
-			reason := fmt.Sprintf("%d/%d criteria met", verdict.Met, verdict.Criteria)
+			reason := fmt.Sprintf("%d/%d criteria verified", verdict.Verified, verdict.Criteria)
 			if !verdict.HasCriteria {
 				reason = "no acceptance criteria found"
 			}
@@ -1009,12 +1014,16 @@ func reconcileComment(issue vcs.Issue, v issues.Verdict, read issues.DocReader) 
 		b.WriteString("No acceptance criteria were found in the issue or its referenced docs.\n")
 		return b.String()
 	}
-	fmt.Fprintf(&b, "Acceptance criteria: %d/%d met.\n\n", v.Met, v.Criteria)
+	fmt.Fprintf(&b, "Acceptance criteria: %d/%d verified.\n\n", v.Verified, v.Criteria)
 	unmet := issues.Unmet(issue, read)
 	if len(unmet) > 0 {
-		b.WriteString("Outstanding:\n")
+		b.WriteString("Outstanding (no verified evidence):\n")
 		for _, c := range unmet {
-			fmt.Fprintf(&b, "- [ ] %s\n", c.Text)
+			box := " "
+			if c.Done {
+				box = "x"
+			}
+			fmt.Fprintf(&b, "- [%s] %s\n", box, c.Text)
 		}
 	}
 	b.WriteString("\n_Automated by review-engine._\n")
@@ -1221,4 +1230,16 @@ func splitRepo(s string) (string, string, error) {
 		return "", "", fmt.Errorf("--repository must be owner/name, got %q", s)
 	}
 	return parts[0], parts[1], nil
+}
+
+// hasLabel reports whether the issue carries the named label (case-insensitive).
+func hasLabel(labels []struct {
+	Name string `json:"name"`
+}, want string) bool {
+	for _, l := range labels {
+		if strings.EqualFold(strings.TrimSpace(l.Name), strings.TrimSpace(want)) {
+			return true
+		}
+	}
+	return false
 }

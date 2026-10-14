@@ -1,11 +1,14 @@
 # Example: issue review with closure gating.
 # Runs when an issue is closed, reviews it against its acceptance criteria, and
-# comments. Auto-reopen is opt-in via `reopen: "true"`.
+# comments. A criterion counts as satisfied only when it cites independent
+# evidence (a linked test/path, PR/commit reference, or explicit approval); a
+# checked box alone is reported as unverified and never closes the issue.
 #
 # Defaults: comment-only. Set `close: "true"` to close an issue automatically
-# once every criterion is met, `reopen: "true"` to reopen a closed issue with
-# unmet criteria, and `block: "true"` to fail the step on unmet criteria (useful
-# as a required check when a PR declares `Closes #n`).
+# once every criterion is independently verified, `reopen: "true"` to reopen a
+# closed issue with unverified criteria, and `block: "true"` to fail the step
+# on unverified criteria (useful as a required check when a PR declares
+# `Closes #n`).
 
 name: Issue review
 
