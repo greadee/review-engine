@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: greadee/review-engine@47429e8c9cdf23f75a5cce5c239cdd36de53bdc3
+      - uses: greadee/review-engine@dad2d3b48d46194a65c3358246aa381104a9964b
         with:
           profile: issue
           issue: ${{ github.event.issue.number }}
