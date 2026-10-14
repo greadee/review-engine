@@ -94,6 +94,53 @@ func (c *GitHub) Comment(ctx context.Context, owner, repo string, number int, bo
 	return c.do(ctx, http.MethodPost, path, map[string]string{"body": body}, nil)
 }
 
+// AuthenticatedLogin returns the login of the token's user.
+func (c *GitHub) AuthenticatedLogin(ctx context.Context) (string, error) {
+	var u struct {
+		Login string `json:"login"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/user", nil, &u); err != nil {
+		return "", err
+	}
+	return u.Login, nil
+}
+
+type issueComment struct {
+	ID   int64  `json:"id"`
+	Body string `json:"body"`
+	User struct {
+		Login string `json:"login"`
+	} `json:"user"`
+}
+
+// UpsertComment posts a comment, or updates this actor's existing comment that
+// carries the same hidden marker. It keeps comments idempotent across runs
+// (re-runs update rather than duplicate) while leaving comments from other
+// authors untouched.
+func (c *GitHub) UpsertComment(ctx context.Context, owner, repo string, number int, marker, body string) error {
+	login, err := c.AuthenticatedLogin(ctx)
+	if err != nil {
+		return err
+	}
+	want := marker + "\n\n" + body
+	for page := 1; page <= 10; page++ {
+		var comments []issueComment
+		path := fmt.Sprintf("/repos/%s/%s/issues/%d/comments?per_page=100&page=%d", owner, repo, number, page)
+		if err := c.do(ctx, http.MethodGet, path, nil, &comments); err != nil {
+			return err
+		}
+		for _, cm := range comments {
+			if cm.User.Login == login && strings.Contains(cm.Body, marker) {
+				return c.do(ctx, http.MethodPatch, fmt.Sprintf("/repos/%s/%s/issues/comments/%d", owner, repo, cm.ID), map[string]string{"body": want}, nil)
+			}
+		}
+		if len(comments) < 100 {
+			break
+		}
+	}
+	return c.Comment(ctx, owner, repo, number, want)
+}
+
 // CreateIssue opens an issue and returns its number.
 func (c *GitHub) CreateIssue(ctx context.Context, owner, repo, title, body string, labels []string) (int, error) {
 	payload := map[string]any{"title": title, "body": body}

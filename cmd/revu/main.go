@@ -347,7 +347,8 @@ func run(args []string) error {
 			return fmt.Errorf("--repository is required to comment")
 		}
 		gh := vcs.NewGitHub("")
-		if err := gh.Comment(context.Background(), owner, name, c.pr, report.SummaryMarkdown(res.Run)); err != nil {
+		marker := fmt.Sprintf("<!-- revu:run=%s -->", res.Run.ID)
+		if err := gh.UpsertComment(context.Background(), owner, name, c.pr, marker, report.SummaryMarkdown(res.Run)); err != nil {
 			return err
 		}
 		fmt.Printf("posted comment on PR #%d\n", c.pr)
@@ -528,7 +529,8 @@ func finalizeCmd(args []string) error {
 		}
 		if *comment && c.pr > 0 {
 			body := report.SummaryMarkdown(res.Run)
-			if err := gh.Comment(context.Background(), owner, name, c.pr, body); err != nil {
+			marker := fmt.Sprintf("<!-- revu:run=%s -->", res.Run.ID)
+			if err := gh.UpsertComment(context.Background(), owner, name, c.pr, marker, body); err != nil {
 				return err
 			}
 			fmt.Printf("posted comment on PR #%d\n", c.pr)
@@ -616,7 +618,8 @@ func issueReview(args []string) error {
 	verdict := issues.EvaluateWith(issue, reader)
 	closed := strings.EqualFold(issue.State, "closed")
 	if *comment {
-		if err := gh.Comment(ctx, owner, name, *issueNum, report.SummaryMarkdown(res.Run)); err != nil {
+		marker := fmt.Sprintf("<!-- revu:run=%s -->", res.Run.ID)
+		if err := gh.UpsertComment(ctx, owner, name, *issueNum, marker, report.SummaryMarkdown(res.Run)); err != nil {
 			return err
 		}
 	}
@@ -917,7 +920,7 @@ func reconcile(args []string) error {
 			openN++
 			if *comment && !*dryRun {
 				body := relatedFindingsComment(issue, related)
-				if err := gh.Comment(ctx, owner, name, n, body); err != nil {
+				if err := gh.UpsertComment(ctx, owner, name, n, fmt.Sprintf("<!-- revu:reconcile=issue-%d -->", n), body); err != nil {
 					return err
 				}
 			}
@@ -950,7 +953,7 @@ func reconcile(args []string) error {
 			openN++
 			if *comment && !*dryRun {
 				body := reconcileComment(issue, verdict, reader)
-				if err := gh.Comment(ctx, owner, name, n, body); err != nil {
+				if err := gh.UpsertComment(ctx, owner, name, n, fmt.Sprintf("<!-- revu:reconcile=issue-%d -->", n), body); err != nil {
 					return err
 				}
 			}

@@ -67,6 +67,63 @@ func TestPutFileRetriesOnConflict(t *testing.T) {
 	}
 }
 
+func TestUpsertCommentUpdatesOwn(t *testing.T) {
+	var patched, posted bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/user":
+			_, _ = w.Write([]byte(`{"login":"bot"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/1/comments":
+			_, _ = w.Write([]byte(`[{"id":7,"body":"<!-- revu:run=x -->\nold","user":{"login":"bot"}}]`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/repos/o/r/issues/comments/7":
+			patched = true
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues/1/comments":
+			posted = true
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewGitHub("token")
+	c.BaseURL = srv.URL
+	if err := c.UpsertComment(context.Background(), "o", "r", 1, "<!-- revu:run=x -->", "new"); err != nil {
+		t.Fatal(err)
+	}
+	if !patched || posted {
+		t.Fatalf("expected in-place update: patched=%v posted=%v", patched, posted)
+	}
+}
+
+func TestUpsertCommentCreatesWhenNone(t *testing.T) {
+	var posted bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/user":
+			_, _ = w.Write([]byte(`{"login":"bot"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/1/comments":
+			_, _ = w.Write([]byte(`[{"id":9,"body":"unrelated","user":{"login":"someone"}}]`))
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues/1/comments":
+			posted = true
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewGitHub("token")
+	c.BaseURL = srv.URL
+	if err := c.UpsertComment(context.Background(), "o", "r", 1, "<!-- revu:run=x -->", "new"); err != nil {
+		t.Fatal(err)
+	}
+	if !posted {
+		t.Fatal("expected a new comment when no own marker exists")
+	}
+}
+
 func TestGitHubCommentAndPublish(t *testing.T) {
 	var commented string
 	var branchCreated bool
