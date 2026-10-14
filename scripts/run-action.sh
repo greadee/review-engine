@@ -62,6 +62,13 @@ done
 threshold="${REVIEW_INPUT_BLOCK_THRESHOLD:-P1}"
 require_enum block-threshold "$threshold" P0 P1 P2 P3
 
+coverage_threshold="${REVIEW_INPUT_COVERAGE_THRESHOLD:-}"
+if [ -n "$coverage_threshold" ]; then
+  case "$coverage_threshold" in
+    *[!0-9.]*) fail "invalid coverage-threshold: $coverage_threshold (expected a number in [0,1])" ;;
+  esac
+fi
+
 pr="${REVIEW_INPUT_PR:-}"
 issue="${REVIEW_INPUT_ISSUE:-}"
 require_uint pr "$pr"
@@ -101,6 +108,7 @@ export REVIEW_ISSUE_AUTO_REOPEN="$reopen"
 # inputs so a pull request cannot redirect the key through revu.yaml.
 [ -n "$base_url" ] && export REVIEW_PROVIDER_BASE_URL="$base_url"
 [ -n "$allowed_base_urls" ] && export REVIEW_PROVIDER_ALLOWED_BASE_URLS="$allowed_base_urls"
+[ -n "$coverage_threshold" ] && export REVIEW_COVERAGE_THRESHOLD="$coverage_threshold"
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   echo "summary=summary.md" >> "$GITHUB_OUTPUT"

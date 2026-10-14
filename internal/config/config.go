@@ -96,6 +96,11 @@ type ReviewConfig struct {
 	MaxFileBytes int `yaml:"maxFileBytes"`
 	// BlockThreshold is the severity at or above which findings block.
 	BlockThreshold string `yaml:"blockThreshold"`
+	// CoverageThreshold is the minimum fraction (0..1) of selected files that
+	// must reach analysis for a run to be considered complete. The default 1.0
+	// means any skip, truncation, or provider failure yields an incomplete
+	// result that never approves.
+	CoverageThreshold float64 `yaml:"coverageThreshold"`
 }
 
 // ArchiveConfig controls findings persistence and publishing.
@@ -144,12 +149,13 @@ func Default() Config {
 			APIKeyEnv: "REVIEW_PROVIDER_API_KEY",
 		},
 		Review: ReviewConfig{
-			Static:         true,
-			Semantic:       true,
-			Rubric:         DefaultRubric(),
-			MaxFiles:       60,
-			MaxFileBytes:   200_000,
-			BlockThreshold: "P1",
+			Static:            true,
+			Semantic:          true,
+			Rubric:            DefaultRubric(),
+			MaxFiles:          60,
+			MaxFileBytes:      200_000,
+			BlockThreshold:    "P1",
+			CoverageThreshold: 1.0,
 		},
 		Archive: ArchiveConfig{
 			Enabled: true,
@@ -212,6 +218,9 @@ func Load(path string) (Config, error) {
 var PersistModes = []string{"always", "on-findings", "on-risk", "never"}
 
 func (c Config) Validate() error {
+	if c.Review.CoverageThreshold < 0 || c.Review.CoverageThreshold > 1 {
+		return fmt.Errorf("config: review.coverageThreshold must be between 0 and 1, got %v", c.Review.CoverageThreshold)
+	}
 	mode := strings.ToLower(strings.TrimSpace(c.Persist.Mode))
 	if mode == "" {
 		return nil // treated as always
@@ -335,6 +344,11 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("REVIEW_BLOCK_THRESHOLD"); v != "" {
 		cfg.Review.BlockThreshold = v
+	}
+	if v := os.Getenv("REVIEW_COVERAGE_THRESHOLD"); v != "" {
+		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+			cfg.Review.CoverageThreshold = f
+		}
 	}
 	if v := os.Getenv("REVIEW_STATIC"); v != "" {
 		cfg.Review.Static = parseBool(v, cfg.Review.Static)

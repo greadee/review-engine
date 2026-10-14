@@ -357,6 +357,9 @@ func run(args []string) error {
 	if !*noBlock && len(res.Run.Blocking()) > 0 {
 		return fmt.Errorf("%d blocking finding(s) at or above %s", len(res.Run.Blocking()), res.Run.BlockThreshold)
 	}
+	if !*noBlock && !res.Run.Coverage.Complete() {
+		return fmt.Errorf("review coverage incomplete (%s); lower review.coverageThreshold or raise maxFiles/maxFileBytes to accept", res.Run.Coverage)
+	}
 	return nil
 }
 
@@ -562,6 +565,9 @@ func finalizeCmd(args []string) error {
 
 	if !*noBlock && len(res.Run.Blocking()) > 0 {
 		return fmt.Errorf("%d blocking finding(s) at or above %s", len(res.Run.Blocking()), res.Run.BlockThreshold)
+	}
+	if !*noBlock && !res.Run.Coverage.Complete() {
+		return fmt.Errorf("review coverage incomplete (%s); lower review.coverageThreshold or raise maxFiles/maxFileBytes to accept", res.Run.Coverage)
 	}
 	return nil
 }
@@ -775,6 +781,7 @@ review:
   maxFiles: 60
   maxFileBytes: 200000
   blockThreshold: P1
+  coverageThreshold: 1.0
 
 archive:
   enabled: true

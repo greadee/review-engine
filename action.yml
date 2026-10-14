@@ -111,6 +111,10 @@ inputs:
     description: "Severity at or above which the run fails (P0|P1|P2|P3)"
     required: false
     default: P1
+  coverage-threshold:
+    description: "Minimum fraction (0..1) of selected files that must be analyzed (default 1.0)"
+    required: false
+    default: ""
   api-key:
     description: "Provider API key (pass a secret)"
     required: false
@@ -166,6 +170,7 @@ runs:
         REVIEW_INPUT_ARCHIVE_BRANCH: ${{ inputs.archive-branch }}
         REVIEW_INPUT_STORE_SQLITE: ${{ inputs.store-sqlite }}
         REVIEW_INPUT_BLOCK_THRESHOLD: ${{ inputs.block-threshold }}
+        REVIEW_INPUT_COVERAGE_THRESHOLD: ${{ inputs.coverage-threshold }}
         REVIEW_ACTION_PATH: ${{ github.action_path }}
         REVIEW_PROVIDER_API_KEY: ${{ inputs.api-key }}
         GITHUB_TOKEN: ${{ github.token }}

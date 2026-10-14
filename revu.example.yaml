@@ -16,6 +16,7 @@ review:
   maxFiles: 60
   maxFileBytes: 200000
   blockThreshold: P1 # run fails when a finding is at or above this severity
+  coverageThreshold: 1.0 # min fraction of selected files that must be analyzed; below this the result is "Incomplete"
 
 archive:
   enabled: true

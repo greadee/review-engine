@@ -53,6 +53,13 @@ type Bundle struct {
 	Rubric         []string                `json:"rubric,omitempty"`
 	Files          []reviewers.FileContent `json:"files,omitempty"`
 	StaticFindings []findings.Finding      `json:"staticFindings,omitempty"`
+	// Coverage describes how the collect phase scoped and gathered the review.
+	// It is advisory: the finalize phase also accounts for its own semantic
+	// coverage. Values are validated to be sane but cannot be fully trusted.
+	Selected       int `json:"selectedFiles,omitempty"`
+	Skipped        int `json:"skippedFiles,omitempty"`
+	Truncated      int `json:"truncatedFiles,omitempty"`
+	TruncatedBytes int `json:"truncatedBytes,omitempty"`
 }
 
 // Trusted identifies the review the bundle is expected to describe. Values are
@@ -134,6 +141,12 @@ func (b Bundle) Validate() error {
 		if err := f.Validate(); err != nil {
 			return fmt.Errorf("bundle: static finding %d: %w", i, err)
 		}
+	}
+	if b.Selected < 0 || b.Skipped < 0 || b.Truncated < 0 || b.TruncatedBytes < 0 {
+		return fmt.Errorf("bundle: coverage counts must be non-negative")
+	}
+	if b.Selected != 0 && b.Selected < len(b.Files) {
+		return fmt.Errorf("bundle: selectedFiles (%d) is less than the file count (%d)", b.Selected, len(b.Files))
 	}
 	return nil
 }

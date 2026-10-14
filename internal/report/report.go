@@ -26,6 +26,69 @@ type Run struct {
 	BlockThreshold findings.Severity
 	// ArchiveURL links to the persisted findings source files, when available.
 	ArchiveURL string
+	// Coverage records how much of the scope actually reached analysis.
+	Coverage Coverage
+}
+
+// Coverage reports review completeness so a clean result cannot hide files that
+// were never analyzed (skipped past maxFiles, truncated, or failed batches).
+type Coverage struct {
+	Selected       int     `json:"selected"`
+	Analyzed       int     `json:"analyzed"`
+	Skipped        int     `json:"skipped"`
+	Truncated      int     `json:"truncated"`
+	TruncatedBytes int     `json:"truncatedBytes,omitempty"`
+	FailedBatches  int     `json:"failedBatches,omitempty"`
+	Threshold      float64 `json:"threshold,omitempty"`
+}
+
+// Fraction is the share of selected files that reached analysis.
+func (c Coverage) Fraction() float64 {
+	if c.Selected <= 0 {
+		return 1
+	}
+	f := float64(c.Analyzed) / float64(c.Selected)
+	if f > 1 {
+		return 1
+	}
+	return f
+}
+
+// Complete reports whether the whole scope was analyzed without skips,
+// truncation, or provider failures, and meets the configured threshold.
+func (c Coverage) Complete() bool {
+	if c.Skipped > 0 || c.Truncated > 0 || c.FailedBatches > 0 {
+		return false
+	}
+	if c.Threshold > 0 && c.Fraction() < c.Threshold {
+		return false
+	}
+	return true
+}
+
+// String renders coverage for a comment.
+func (c Coverage) String() string {
+	if c.Selected <= 0 {
+		return "n/a"
+	}
+	s := fmt.Sprintf("%d/%d files", c.Analyzed, c.Selected)
+	var notes []string
+	if c.Skipped > 0 {
+		notes = append(notes, fmt.Sprintf("%d skipped", c.Skipped))
+	}
+	if c.Truncated > 0 {
+		notes = append(notes, fmt.Sprintf("%d truncated (%d bytes)", c.Truncated, c.TruncatedBytes))
+	}
+	if c.FailedBatches > 0 {
+		notes = append(notes, fmt.Sprintf("%d batches failed", c.FailedBatches))
+	}
+	if len(notes) > 0 {
+		s += " (" + strings.Join(notes, ", ") + ")"
+	}
+	if !c.Complete() {
+		s += " — INCOMPLETE"
+	}
+	return s
 }
 
 // Delta summarizes lifecycle movement between the previous run and this one.
@@ -104,13 +167,17 @@ func (r Run) Risk() string {
 	}
 }
 
-// Recommendation maps risk and blocking findings to a verdict.
+// Recommendation maps risk and blocking findings to a verdict. A run whose
+// coverage is incomplete is never reported as "Approve".
 func (r Run) Recommendation() string {
 	if len(r.Blocking()) > 0 {
 		return "Request Changes"
 	}
 	if len(r.Findings) > 0 {
 		return "Needs Investigation"
+	}
+	if !r.Coverage.Complete() {
+		return "Incomplete — required scope was not fully reviewed"
 	}
 	return "Approve"
 }
@@ -129,6 +196,7 @@ func ReviewMarkdown(r Run) string {
 	b.WriteString("\n### Validation\n\n")
 	fmt.Fprintf(&b, "- findings: %s\n", countsString(r.Counts()))
 	fmt.Fprintf(&b, "- block threshold: %s\n", r.BlockThreshold)
+	fmt.Fprintf(&b, "- coverage: %s\n", r.Coverage)
 	d := r.Delta()
 	fmt.Fprintf(&b, "- delta: new=%d ongoing=%d regressed=%d resolved=%d\n", d.New, d.Ongoing, d.Regressed, d.Resolved)
 
@@ -150,6 +218,7 @@ func SummaryMarkdown(r Run) string {
 	b.WriteString("## Review Summary\n\n")
 	fmt.Fprintf(&b, "_Profile `%s` · %d finding(s) · generated %s_\n\n", r.Profile, len(r.Findings), r.Generated.UTC().Format(time.RFC3339))
 	fmt.Fprintf(&b, "Severity: %s\n\n", countsString(r.Counts()))
+	fmt.Fprintf(&b, "Coverage: %s\n\n", r.Coverage)
 
 	b.WriteString("### Blocking\n\n")
 	writeFindingsBrief(&b, r.Blocking(), 10)
@@ -193,7 +262,8 @@ func AuditMarkdown(r Run) string {
 	d := r.Delta()
 	fmt.Fprintf(&b, "\n### Delta\n\nnew=%d ongoing=%d regressed=%d resolved=%d\n", d.New, d.Ongoing, d.Regressed, d.Resolved)
 	b.WriteString("\n### Areas Reviewed\n\n")
-	fmt.Fprintf(&b, "- profile: %s\n\n", r.Profile)
+	fmt.Fprintf(&b, "- profile: %s\n", r.Profile)
+	fmt.Fprintf(&b, "- coverage: %s\n\n", r.Coverage)
 	b.WriteString("### Result\n\n")
 	b.WriteString(r.Recommendation())
 	b.WriteString("\n")

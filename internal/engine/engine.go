@@ -102,27 +102,39 @@ func (e *Engine) RunRange(ctx context.Context, profile, base, head, repository, 
 	return e.Finalize(ctx, b)
 }
 
-func (e *Engine) gather(ref string, paths []string) []reviewers.FileContent {
+// gatherStats reports how file contents were gathered for semantic review.
+type gatherStats struct {
+	files          []reviewers.FileContent
+	skipped        int
+	truncated      int
+	truncatedBytes int
+}
+
+func (e *Engine) gather(ref string, paths []string) gatherStats {
 	maxFiles := e.opts.Config.Review.MaxFiles
 	maxBytes := e.opts.Config.Review.MaxFileBytes
 	if maxFiles <= 0 {
 		maxFiles = 60
 	}
-	var out []reviewers.FileContent
+	var g gatherStats
 	for _, p := range paths {
-		if len(out) >= maxFiles {
-			break
+		if len(g.files) >= maxFiles {
+			g.skipped++
+			continue
 		}
 		data, err := e.opts.Repo.File(ref, p)
 		if err != nil {
+			g.skipped++
 			continue
 		}
 		if maxBytes > 0 && len(data) > maxBytes {
+			g.truncated++
+			g.truncatedBytes += len(data) - maxBytes
 			data = data[:maxBytes]
 		}
-		out = append(out, reviewers.FileContent{Path: p, Content: string(data)})
+		g.files = append(g.files, reviewers.FileContent{Path: p, Content: string(data)})
 	}
-	return out
+	return g
 }
 
 func threshold(s string) findings.Severity {

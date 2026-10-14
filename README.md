@@ -205,6 +205,24 @@ revu run --persist on-findings            # only store when findings exist
 revu run --persist never                  # compute + notify, store nothing
 ```
 
+### Review coverage
+
+The semantic pass is bounded (`review.maxFiles`, `review.maxFileBytes`) and runs
+in batches, so a large PR can never be silently approved after only part of it
+was reviewed. Every run records what was **selected**, **analyzed**, **skipped**
+(past `maxFiles`), **truncated** (past `maxFileBytes`), and any **failed
+batches**; the summary comment, the archive, and the JSON all carry these
+numbers.
+
+- A result whose coverage is incomplete is never reported as `Approve`; the
+  verdict becomes `Incomplete`.
+- The required check fails when coverage is incomplete unless `--no-block` is
+  set.
+- `review.coverageThreshold` (action input `coverage-threshold`, env
+  `REVIEW_COVERAGE_THRESHOLD`) sets the minimum analyzed fraction, `0..1`
+  (default `1.0`). Lower it to accept partial coverage; raise `maxFiles` /
+  `maxFileBytes` to actually cover more.
+
 ### Tracking store
 
 Tracking is on by default and uses the JSON store at `--state-dir`

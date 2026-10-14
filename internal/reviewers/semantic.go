@@ -30,11 +30,24 @@ type Semantic struct {
 	Provider  provider.Provider
 	Model     string
 	MaxTokens int
+	// MaxBatchFiles and MaxBatchBytes bound one provider request so a large PR
+	// is reviewed in deterministic batches instead of one oversized call.
+	MaxBatchFiles int
+	MaxBatchBytes int
 }
 
 // New builds a semantic reviewer.
 func New(p provider.Provider, model string) *Semantic {
-	return &Semantic{Provider: p, Model: model, MaxTokens: 4096}
+	return &Semantic{Provider: p, Model: model, MaxTokens: 4096, MaxBatchFiles: 25, MaxBatchBytes: 150_000}
+}
+
+// Coverage reports how a semantic pass was executed. Analyzed counts files in
+// batches that completed; Failed counts batches that errored.
+type Coverage struct {
+	Batches  int
+	Analyzed int
+	Failed   int
+	Errors   []string
 }
 
 type modelFinding struct {
@@ -53,38 +66,85 @@ type modelOutput struct {
 	Findings []modelFinding `json:"findings"`
 }
 
-// Review calls the provider and returns findings. When there are no files it
-// returns no findings without calling the provider.
-func (s *Semantic) Review(ctx context.Context, in Input) ([]findings.Finding, error) {
+// Review calls the provider in bounded batches and returns the findings plus
+// coverage. When there are no files it returns no findings without calling the
+// provider. A batch that fails is recorded in coverage rather than aborting the
+// run, so a failure produces an incomplete result instead of a silent approve.
+func (s *Semantic) Review(ctx context.Context, in Input) ([]findings.Finding, Coverage, error) {
 	if s.Provider == nil {
-		return nil, fmt.Errorf("reviewer: provider is required")
+		return nil, Coverage{}, fmt.Errorf("reviewer: provider is required")
 	}
 	if len(in.Files) == 0 {
-		return nil, nil
+		return nil, Coverage{}, nil
 	}
-	req := provider.Request{
-		Model:       s.Model,
-		MaxTokens:   s.MaxTokens,
-		JSON:        true,
-		Temperature: zero(),
-		Messages: []provider.Message{
-			{Role: "system", Content: systemPrompt()},
-			{Role: "user", Content: userPrompt(in)},
-		},
+	batches := batchFiles(in.Files, s.batchFiles(), s.batchBytes())
+	var out []findings.Finding
+	cov := Coverage{Batches: len(batches)}
+	for _, batch := range batches {
+		req := provider.Request{
+			Model:       s.Model,
+			MaxTokens:   s.MaxTokens,
+			JSON:        true,
+			Temperature: zero(),
+			Messages: []provider.Message{
+				{Role: "system", Content: systemPrompt()},
+				{Role: "user", Content: userPrompt(Input{Profile: in.Profile, Rubric: in.Rubric, Files: batch})},
+			},
+		}
+		resp, err := s.Provider.Complete(ctx, req)
+		if err != nil {
+			cov.Failed++
+			cov.Errors = append(cov.Errors, err.Error())
+			continue
+		}
+		parsed, err := parseOutput(resp.Text)
+		if err != nil {
+			cov.Failed++
+			cov.Errors = append(cov.Errors, err.Error())
+			continue
+		}
+		cov.Analyzed += len(batch)
+		for _, mf := range parsed.Findings {
+			out = append(out, toFinding(mf, in.Profile))
+		}
 	}
-	resp, err := s.Provider.Complete(ctx, req)
-	if err != nil {
-		return nil, fmt.Errorf("reviewer: completion failed: %w", err)
+	return out, cov, nil
+}
+
+func (s *Semantic) batchFiles() int {
+	if s.MaxBatchFiles > 0 {
+		return s.MaxBatchFiles
 	}
-	parsed, err := parseOutput(resp.Text)
-	if err != nil {
-		return nil, err
+	return 25
+}
+
+func (s *Semantic) batchBytes() int {
+	if s.MaxBatchBytes > 0 {
+		return s.MaxBatchBytes
 	}
-	out := make([]findings.Finding, 0, len(parsed.Findings))
-	for _, mf := range parsed.Findings {
-		out = append(out, toFinding(mf, in.Profile))
+	return 150_000
+}
+
+// batchFiles splits files into batches bounded by count and total bytes. A
+// single file larger than the byte budget gets its own batch.
+func batchFiles(files []FileContent, maxFiles, maxBytes int) [][]FileContent {
+	var batches [][]FileContent
+	var cur []FileContent
+	curBytes := 0
+	for _, f := range files {
+		sz := len(f.Content)
+		if len(cur) > 0 && (len(cur) >= maxFiles || curBytes+sz > maxBytes) {
+			batches = append(batches, cur)
+			cur = nil
+			curBytes = 0
+		}
+		cur = append(cur, f)
+		curBytes += sz
 	}
-	return out, nil
+	if len(cur) > 0 {
+		batches = append(batches, cur)
+	}
+	return batches
 }
 
 func toFinding(mf modelFinding, profile string) findings.Finding {

@@ -60,6 +60,7 @@ func (e *Engine) Collect(ctx context.Context, profile, base, head, repository, r
 		}
 	}
 
+	gathered := e.gather(head, sc.Files)
 	return bundle.Bundle{
 		Version:        bundle.Version,
 		Profile:        profile,
@@ -72,7 +73,11 @@ func (e *Engine) Collect(ctx context.Context, profile, base, head, repository, r
 		Generated:      e.opts.Now().UTC(),
 		BlockThreshold: e.opts.Config.Review.BlockThreshold,
 		Rubric:         e.opts.Config.Review.Rubric,
-		Files:          e.gather(head, sc.Files),
+		Selected:       len(sc.Files),
+		Skipped:        gathered.skipped,
+		Truncated:      gathered.truncated,
+		TruncatedBytes: gathered.truncatedBytes,
+		Files:          gathered.files,
 		StaticFindings: set.Items(),
 	}, nil
 }
@@ -99,6 +104,17 @@ func (e *Engine) Finalize(ctx context.Context, b bundle.Bundle) (Result, error) 
 		set.Add(f)
 	}
 
+	coverage := report.Coverage{
+		Selected:       b.Selected,
+		Skipped:        b.Skipped,
+		Truncated:      b.Truncated,
+		TruncatedBytes: b.TruncatedBytes,
+		Threshold:      e.opts.Config.Review.CoverageThreshold,
+	}
+	if coverage.Selected == 0 {
+		coverage.Selected = len(b.Files)
+	}
+
 	if e.opts.Config.Review.Semantic {
 		if e.opts.Reviewer == nil || e.opts.Provider == nil {
 			return Result{}, fmt.Errorf("engine: semantic review is enabled but no provider is configured")
@@ -107,7 +123,7 @@ func (e *Engine) Finalize(ctx context.Context, b bundle.Bundle) (Result, error) 
 		if len(rubric) == 0 {
 			rubric = b.Rubric
 		}
-		found, err := e.opts.Reviewer.Review(ctx, reviewers.Input{
+		found, semCov, err := e.opts.Reviewer.Review(ctx, reviewers.Input{
 			Profile: b.Profile,
 			Rubric:  rubric,
 			Files:   b.Files,
@@ -115,12 +131,17 @@ func (e *Engine) Finalize(ctx context.Context, b bundle.Bundle) (Result, error) 
 		if err != nil {
 			return Result{}, fmt.Errorf("engine: semantic review: %w", err)
 		}
+		coverage.Analyzed = semCov.Analyzed
+		coverage.FailedBatches = semCov.Failed
 		for _, f := range found {
 			if err := f.Validate(); err != nil {
 				continue
 			}
 			set.Add(f)
 		}
+	} else {
+		// No semantic pass: the whole selected scope was covered by static analysis.
+		coverage.Analyzed = coverage.Selected
 	}
 
 	cur := set.Items()
@@ -155,6 +176,7 @@ func (e *Engine) Finalize(ctx context.Context, b bundle.Bundle) (Result, error) 
 			Findings:       tracked,
 			Resolved:       resolved,
 			BlockThreshold: threshold(e.opts.Config.Review.BlockThreshold),
+			Coverage:       coverage,
 		},
 		Findings:  tracked,
 		Persisted: persisted,

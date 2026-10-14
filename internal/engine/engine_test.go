@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -392,5 +393,61 @@ func TestFinalizeRejectsInvalidBundle(t *testing.T) {
 				t.Fatalf("expected rejection of invalid bundle (%s)", name)
 			}
 		})
+	}
+}
+
+// TestCoverageIncompleteOnLargePR is the regression test for truncated scans:
+// with more changed files than maxFiles the run must record the skips and must
+// not approve.
+func TestCoverageIncompleteOnLargePR(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q")
+	if err := os.WriteFile(filepath.Join(dir, "seed.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "base")
+	base := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	for i := 0; i < 61; i++ {
+		writeFile(t, dir, fmt.Sprintf("pkg/f%02d.go", i), fmt.Sprintf("package pkg\n\nvar V%02d = %d\n", i, i))
+	}
+	// One oversized file, larger than maxFileBytes, so it is truncated.
+	writeFile(t, dir, "pkg/big.go", "package pkg\n\n// "+strings.Repeat("x", 500)+"\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "head")
+	head := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	cfg := config.Default()
+	cfg.Review.Static = false
+	cfg.Review.Semantic = true
+	cfg.Review.MaxFiles = 60
+	cfg.Review.MaxFileBytes = 100
+	repo, _ := vcs.Open(dir)
+	fake := &provider.Fake{Responses: []string{`{"findings":[]}`}}
+	eng := New(Options{Config: cfg, Repo: repo, Provider: fake, Reviewer: reviewers.New(fake, "m"), Store: store.Stateless{}})
+
+	res, err := eng.RunRange(context.Background(), "pr", base, head, "o/r", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cov := res.Run.Coverage
+	if cov.Selected != 62 {
+		t.Fatalf("expected 62 selected files, got %+v", cov)
+	}
+	if cov.Skipped != 2 {
+		t.Fatalf("expected 2 skipped files, got %+v", cov)
+	}
+	if cov.Analyzed != 60 {
+		t.Fatalf("expected 60 analyzed files, got %+v", cov)
+	}
+	if cov.Complete() {
+		t.Fatalf("coverage with skips must be incomplete: %+v", cov)
+	}
+	if res.Run.Recommendation() == "Approve" {
+		t.Fatal("a truncated scan must never approve")
+	}
+	if res.Run.Recommendation() != "Incomplete — required scope was not fully reviewed" {
+		t.Fatalf("unexpected verdict %q", res.Run.Recommendation())
 	}
 }

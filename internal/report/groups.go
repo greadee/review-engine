@@ -138,22 +138,22 @@ func groupBody(by, key string, items []findings.Finding) string {
 func writeTable(b *strings.Builder, items []findings.Finding) {
 	b.WriteString("| Severity | Location | Finding |\n|---|---|---|\n")
 	for _, f := range items {
-		fmt.Fprintf(b, "| %s | `%s` | %s |\n", f.Severity, loc(f), f.Title)
+		fmt.Fprintf(b, "| %s | `%s` | %s |\n", f.Severity, sanitize(loc(f)), sanitize(f.Title))
 	}
 }
 
 func writeDetails(b *strings.Builder, items []findings.Finding) {
 	b.WriteString("### Details\n\n")
 	for _, f := range items {
-		fmt.Fprintf(b, "- **[%s] %s** — `%s`\n", f.Severity, f.Title, loc(f))
+		fmt.Fprintf(b, "- **[%s] %s** — `%s`\n", f.Severity, sanitize(f.Title), sanitize(loc(f)))
 		if f.Impact != "" {
-			fmt.Fprintf(b, "  - Impact: %s\n", f.Impact)
+			fmt.Fprintf(b, "  - Impact: %s\n", sanitize(f.Impact))
 		}
 		if f.Recommendation != "" {
-			fmt.Fprintf(b, "  - Recommendation: %s\n", f.Recommendation)
+			fmt.Fprintf(b, "  - Recommendation: %s\n", sanitize(f.Recommendation))
 		}
 		if f.Evidence.Snippet != "" {
-			fmt.Fprintf(b, "  - Evidence: `%s`\n", strings.TrimSpace(f.Evidence.Snippet))
+			fmt.Fprintf(b, "  - Evidence: `%s`\n", sanitize(strings.TrimSpace(f.Evidence.Snippet)))
 		}
 	}
 }
