@@ -40,6 +40,7 @@ func (ts TypeScript) Analyze(ctx context.Context, t Target) ([]findings.Finding,
 	}
 	cmd := exec.CommandContext(ctx, tsc, "--noEmit", "--pretty", "false")
 	cmd.Dir = t.Dir
+	cmd.Env = childEnv()
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out

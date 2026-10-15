@@ -68,6 +68,7 @@ func runRuff(ctx context.Context, dir, ruff string, files []string) ([]findings.
 	args := append([]string{"check", "--output-format", "concise", "--no-cache"}, files...)
 	cmd := exec.CommandContext(ctx, ruff, args...)
 	cmd.Dir = dir
+	cmd.Env = childEnv()
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -98,6 +99,7 @@ func compileCheck(ctx context.Context, dir, py string, files []string) ([]findin
 	args := append([]string{"-m", "py_compile"}, files...)
 	cmd := exec.CommandContext(ctx, py, args...)
 	cmd.Dir = dir
+	cmd.Env = childEnv()
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out

@@ -5,6 +5,8 @@ package analyzers
 
 import (
 	"context"
+	"os"
+	"strings"
 
 	"github.com/greadee/review-engine/internal/findings"
 )
@@ -33,4 +35,25 @@ type Analyzer interface {
 // when its ecosystem is not detected or its tooling is unavailable.
 func Default() []Analyzer {
 	return []Analyzer{NewGo(), NewPython(), NewTypeScript()}
+}
+
+// childEnv returns a minimal environment for analyzer subprocesses. Repository
+// code is untrusted, so a child process must not inherit the provider key, the
+// GitHub token, or any other secret from the parent. Only variables needed for
+// a build to run are passed through.
+func childEnv() []string {
+	keep := map[string]bool{
+		"PATH": true, "HOME": true, "TMPDIR": true, "TMP": true, "TEMP": true,
+		"LANG": true, "LC_ALL": true, "TZ": true,
+		"GOCACHE": true, "GOPATH": true, "GOMODCACHE": true, "GOROOT": true,
+		"GOFLAGS": true, "GO111MODULE": true,
+		"SYSTEMROOT": true, "PATHEXT": true,
+	}
+	var out []string
+	for _, kv := range os.Environ() {
+		if i := strings.IndexByte(kv, '='); i > 0 && keep[strings.ToUpper(kv[:i])] {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
