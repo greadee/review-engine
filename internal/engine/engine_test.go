@@ -451,3 +451,52 @@ func TestCoverageIncompleteOnLargePR(t *testing.T) {
 		t.Fatalf("unexpected verdict %q", res.Run.Recommendation())
 	}
 }
+
+// TestStaticBuildFindingIsVerifiedAndBlocks is the regression test for #9:
+// a static analyzer finding cites a file and line, and its snippet is the
+// analyzer's diagnostic message (not source text). Evidence verification must
+// therefore check file/line correspondence, not snippet containment — otherwise
+// a broken build is marked unverified and never blocks.
+func TestStaticBuildFindingIsVerifiedAndBlocks(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q")
+	writeFile(t, dir, "go.mod", "module badgo\n\ngo 1.26\n")
+	writeFile(t, dir, "bad.go", "package badgo\n\nfunc F() int { return 1 }\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "base")
+	base := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+	writeFile(t, dir, "bad.go", "package badgo\n\nfunc F() int { return undefinedThing() }\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "head")
+	head := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	cfg := config.Default()
+	cfg.Review.Static = true
+	cfg.Review.Semantic = false
+	cfg.Review.MaxFiles = 50
+	repo, _ := vcs.Open(dir)
+	eng := New(Options{Config: cfg, Repo: repo, Store: store.Stateless{}})
+
+	res, err := eng.RunRange(context.Background(), "pr", base, head, "o/r", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var build *findings.Finding
+	for i := range res.Findings {
+		if res.Findings[i].Detector == "static.gobuild" {
+			build = &res.Findings[i]
+		}
+	}
+	if build == nil {
+		t.Fatalf("expected a static.gobuild finding, got %+v", res.Findings)
+	}
+	if build.Unverified {
+		t.Fatalf("a build finding citing a real file and line must be verified: %+v", *build)
+	}
+	if build.Severity != findings.P1 {
+		t.Fatalf("build failure should be P1, got %s", build.Severity)
+	}
+	if len(res.Run.Blocking()) == 0 {
+		t.Fatalf("a broken build must produce a blocking finding, got %+v", res.Run.NonBlocking())
+	}
+}
