@@ -332,6 +332,8 @@ revu eval --corpus testdata/corpus --check
 See [`docs/corpus.md`](docs/corpus.md) for the fixtures, metrics, thresholds, and
 how to run the optional pinned-model evaluation.
 
+Known constraints are recorded in [`docs/limitations.md`](docs/limitations.md).
+
 ## Status
 
 Stages 0–5: the engine runs the `pr`, `audit`, and `issue` profiles end-to-end with
