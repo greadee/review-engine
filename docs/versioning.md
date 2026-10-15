@@ -69,7 +69,7 @@ the correct spellings.
 
 ## Current position
 
-- **1.0.x** (planning) — the v1 build-out, Stages 0–6.
-- **1.1 Common Rat** — v1.0.0 / v1.1.0 released; `1.1.x` patch work (e.g. the
-  `1.1.1` post-v1 hardening sprint) accumulates here before `1.2 Common
-  Chimpanzee`.
+- **1.0.x** (planning, unnamed) — the v1 build-out (Stages 0–6) and early
+  hardening. Released: `v1.0.0`, `v1.0.1`.
+- **1.1 Common Rat** — next; the post-v1 hardening sprint (PR #17, `1.1.x`)
+  opens this line.
