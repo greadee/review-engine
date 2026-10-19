@@ -13,19 +13,19 @@ import (
 
 // Run is the rendered result of one engine run.
 type Run struct {
-	ID             string             `json:"id"`
-	Profile        string             `json:"profile"`
-	Repository     string             `json:"repository"`
-	Ref            string             `json:"ref"`
-	Base           string             `json:"base"`
-	Head           string             `json:"head"`
-	Generated      time.Time          `json:"generated"`
-	Findings       []findings.Finding `json:"findings"`
+	ID         string             `json:"id"`
+	Profile    string             `json:"profile"`
+	Repository string             `json:"repository"`
+	Ref        string             `json:"ref"`
+	Base       string             `json:"base"`
+	Head       string             `json:"head"`
+	Generated  time.Time          `json:"generated"`
+	Findings   []findings.Finding `json:"findings"`
 	// Resolved are findings tracked previously that are absent from this run.
 	Resolved       []findings.Finding `json:"resolved"`
-	BlockThreshold findings.Severity `json:"blockThreshold"`
+	BlockThreshold findings.Severity  `json:"blockThreshold"`
 	// ArchiveURL links to the persisted findings source files, when available.
-	ArchiveURL string      `json:"archiveURL"`
+	ArchiveURL string `json:"archiveURL"`
 	// Coverage records how much of the scope actually reached analysis.
 	Coverage Coverage `json:"coverage"`
 }
