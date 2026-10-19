@@ -1,0 +1,32 @@
+name: Review dispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "Review profile"
+        type: string
+        default: pr
+      base:
+        description: "Base ref"
+        type: string
+        default: origin/main
+      head:
+        description: "Head ref"
+        type: string
+        default: HEAD
+      pr:
+        description: "PR number"
+        type: string
+        default: ""
+
+jobs:
+  review:
+    uses: greadee/review-engine/.github/workflows/review.yml@1.1.1-post-v1-hardening
+    with:
+      profile: ${{ inputs.profile }}
+      base: ${{ inputs.base }}
+      head: ${{ inputs.head }}
+      pr: ${{ inputs.pr }}
+    secrets:
+      provider-api-key: ${{ secrets.REVIEW_PROVIDER_API_KEY }}
