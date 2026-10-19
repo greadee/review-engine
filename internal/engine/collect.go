@@ -60,7 +60,7 @@ func (e *Engine) Collect(ctx context.Context, profile, base, head, repository, r
 		}
 	}
 
-	gathered := e.gather(head, sc.Files)
+	gathered := e.gather(head, sc.Files, wholeRepo)
 	return bundle.Bundle{
 		Version:        bundle.Version,
 		Profile:        profile,

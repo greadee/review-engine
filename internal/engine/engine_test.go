@@ -452,6 +452,59 @@ func TestCoverageIncompleteOnLargePR(t *testing.T) {
 	}
 }
 
+// TestAuditSprintProfilesIgnoreMaxFiles is the regression test for #12:
+// whole-repo profiles (audit/sprint) must not hit the maxFiles cap, so they
+// don't always report INCOMPLETE coverage.
+func TestAuditSprintProfilesIgnoreMaxFiles(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q")
+
+	// Create 120 files (well above the default maxFiles=60).
+	for i := 0; i < 120; i++ {
+		writeFile(t, dir, fmt.Sprintf("pkg/f%03d.go", i), fmt.Sprintf("package pkg\n\nvar V%03d = %d\n", i, i))
+	}
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "base")
+	base := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	cfg := config.Default()
+	cfg.Review.Static = false
+	cfg.Review.Semantic = false
+	cfg.Review.MaxFiles = 60 // default cap that should NOT apply to audit/sprint
+	repo, _ := vcs.Open(dir)
+	eng := New(Options{Config: cfg, Repo: repo, Store: store.Stateless{}})
+
+	// Audit profile: should analyze ALL files, not stop at 60.
+	res, err := eng.RunRange(context.Background(), "audit", base, base, "o/r", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Run.Coverage.Selected != 120 {
+		t.Fatalf("audit profile should see all 120 files, got selected=%d", res.Run.Coverage.Selected)
+	}
+	if res.Run.Coverage.Skipped != 0 {
+		t.Fatalf("audit profile should skip 0 files, got skipped=%d", res.Run.Coverage.Skipped)
+	}
+	if !res.Run.Coverage.Complete() {
+		t.Fatalf("audit coverage with 120 files must be complete, got %+v", res.Run.Coverage)
+	}
+
+	// Sprint profile: same behavior.
+	res2, err := eng.RunRange(context.Background(), "sprint", base, base, "o/r", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res2.Run.Coverage.Selected != 120 {
+		t.Fatalf("sprint profile should see all 120 files, got selected=%d", res2.Run.Coverage.Selected)
+	}
+	if res2.Run.Coverage.Skipped != 0 {
+		t.Fatalf("sprint profile should skip 0 files, got skipped=%d", res2.Run.Coverage.Skipped)
+	}
+	if !res2.Run.Coverage.Complete() {
+		t.Fatalf("sprint coverage with 120 files must be complete, got %+v", res2.Run.Coverage)
+	}
+}
+
 // TestStaticBuildFindingIsVerifiedAndBlocks is the regression test for #9:
 // a static analyzer finding cites a file and line, and its snippet is the
 // analyzer's diagnostic message (not source text). Evidence verification must
