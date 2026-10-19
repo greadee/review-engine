@@ -174,6 +174,48 @@ func TestUpsertCommentStableMarkerAcrossRuns(t *testing.T) {
 	}
 }
 
+func TestDoRetriesOnRateLimitAndServerErrors(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls < 3 {
+			if r.URL.Path == "/rate-limited" {
+				w.Header().Set("Retry-After", "0")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"message":"rate limited"}`))
+				return
+			}
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"message":"server error"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	c := NewGitHub("token")
+	c.BaseURL = srv.URL
+
+	// Rate limit retry.
+	err := c.do(context.Background(), http.MethodGet, "/rate-limited", nil, nil)
+	if err != nil {
+		t.Fatalf("rate limit retry failed: %v", err)
+	}
+	if calls != 3 {
+		t.Fatalf("expected 3 calls for rate limit retry, got %d", calls)
+	}
+
+	// Server error retry.
+	calls = 0
+	err = c.do(context.Background(), http.MethodGet, "/server-error", nil, nil)
+	if err != nil {
+		t.Fatalf("server error retry failed: %v", err)
+	}
+	if calls != 3 {
+		t.Fatalf("expected 3 calls for server error retry, got %d", calls)
+	}
+}
+
 func TestGitHubCommentAndPublish(t *testing.T) {
 	var commented string
 	var branchCreated bool
