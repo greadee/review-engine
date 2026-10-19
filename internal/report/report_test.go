@@ -1,6 +1,7 @@
 package report
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -100,5 +101,49 @@ func TestSanitizeNeutralizesUntrustedText(t *testing.T) {
 	}
 	if !strings.Contains(md, "&lt;script&gt;") {
 		t.Fatalf("expected escaped HTML:\n%s", md)
+	}
+}
+
+func TestJSONUsesLowercaseSnakeCaseKeys(t *testing.T) {
+	r := Run{
+		ID:             "pr@abc",
+		Profile:        "pr",
+		Repository:     "test/repo",
+		Ref:            "refs/heads/main",
+		Base:           "main",
+		Head:           "feature",
+		Generated:      time.Unix(0, 0).UTC(),
+		Findings:       []findings.Finding{},
+		Resolved:       []findings.Finding{},
+		BlockThreshold: findings.P1,
+		ArchiveURL:     "https://example.com/archive",
+		Coverage:       Coverage{Selected: 100, Analyzed: 100},
+	}
+	data, err := JSON(r)
+	if err != nil {
+		t.Fatalf("JSON marshal failed: %v", err)
+	}
+	raw := string(data)
+	// Verify lowercase snake_case keys are present (not PascalCase).
+	for _, key := range []string{`"id"`, `"profile"`, `"repository"`, `"ref"`, `"base"`, `"head"`, `"generated"`, `"findings"`, `"resolved"`, `"blockThreshold"`, `"archiveURL"`, `"coverage"`} {
+		if !strings.Contains(raw, key) {
+			t.Fatalf("expected key %s in JSON output:\n%s", key, raw)
+		}
+	}
+	// Verify PascalCase keys are NOT present.
+	for _, badKey := range []string{`"ID"`, `"Profile"`, `"Repository"`, `"ArchiveURL"`, `"BlockThreshold"`} {
+		if strings.Contains(raw, badKey) {
+			t.Fatalf("PascalCase key %s found in JSON (should be lowercase snake_case):\n%s", badKey, raw)
+		}
+	}
+	// Verify the JSON round-trips correctly into a map.
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("JSON unmarshal failed: %v", err)
+	}
+	for _, key := range []string{"id", "profile", "repository", "ref", "base", "head", "generated", "findings", "resolved", "blockThreshold", "archiveURL", "coverage"} {
+		if _, ok := decoded[key]; !ok {
+			t.Fatalf("decoded map missing key %q", key)
+		}
 	}
 }
