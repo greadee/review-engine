@@ -351,7 +351,7 @@ func run(args []string) error {
 			return fmt.Errorf("--repository is required to comment")
 		}
 		gh := vcs.NewGitHub("")
-		marker := fmt.Sprintf("<!-- revu:run=%s -->", res.Run.ID)
+		marker := fmt.Sprintf("<!-- revu:pr=%d -->", c.pr)
 		if err := gh.UpsertComment(context.Background(), owner, name, c.pr, marker, report.SummaryMarkdown(res.Run)); err != nil {
 			return err
 		}
@@ -558,9 +558,8 @@ func finalizeCmd(args []string) error {
 			fmt.Printf("\narchived findings: %s\n", url)
 		}
 		if *comment && c.pr > 0 {
-			body := report.SummaryMarkdown(res.Run)
-			marker := fmt.Sprintf("<!-- revu:run=%s -->", res.Run.ID)
-			if err := gh.UpsertComment(context.Background(), owner, name, c.pr, marker, body); err != nil {
+			marker := fmt.Sprintf("<!-- revu:pr=%d -->", c.pr)
+			if err := gh.UpsertComment(context.Background(), owner, name, c.pr, marker, report.SummaryMarkdown(res.Run)); err != nil {
 				return err
 			}
 			fmt.Printf("posted comment on PR #%d\n", c.pr)

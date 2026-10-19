@@ -124,6 +124,56 @@ func TestUpsertCommentCreatesWhenNone(t *testing.T) {
 	}
 }
 
+// TestUpsertCommentStableMarkerAcrossRuns proves that re-runs on the same PR
+// update the existing comment rather than accumulating new ones: the marker
+// is stable across runs with different run IDs.
+func TestUpsertCommentStableMarkerAcrossRuns(t *testing.T) {
+	var posted, patched bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/user":
+			_, _ = w.Write([]byte(`{"login":"bot"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/42/comments":
+			// First call: no existing comment with the stable marker.
+			if !posted {
+				_, _ = w.Write([]byte(`[]`))
+				break
+			}
+			// Second call: the first run already posted with the stable marker.
+			_, _ = w.Write([]byte(`[{"id":55,"body":"<!-- revu:pr=42 -->\nfirst run","user":{"login":"bot"}}]`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/repos/o/r/issues/comments/55":
+			patched = true
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues/42/comments":
+			posted = true
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewGitHub("token")
+	c.BaseURL = srv.URL
+	ctx := context.Background()
+
+	// First run: no prior comment, should create one.
+	if err := c.UpsertComment(ctx, "o", "r", 42, "<!-- revu:pr=42 -->", "first run"); err != nil {
+		t.Fatal(err)
+	}
+	if !posted {
+		t.Fatal("expected first run to create a comment")
+	}
+
+	// Second run with a different run ID but the same PR: should update, not duplicate.
+	if err := c.UpsertComment(ctx, "o", "r", 42, "<!-- revu:pr=42 -->", "second run"); err != nil {
+		t.Fatal(err)
+	}
+	if !patched {
+		t.Fatal("expected second run to patch the existing comment, not create a duplicate")
+	}
+}
+
 func TestGitHubCommentAndPublish(t *testing.T) {
 	var commented string
 	var branchCreated bool
