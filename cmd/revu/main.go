@@ -260,7 +260,7 @@ func run(args []string) error {
 		effectiveStateDir = filepath.Join(cfg.Local.Dir, project)
 	}
 	var st store.Store
-	if cfg.Mode == config.ModeStateless || strings.EqualFold(strings.TrimSpace(cfg.Persist.Mode), "never") {
+	if cfg.Mode == config.ModeStateless || strings.EqualFold(strings.TrimSpace(cfg.Persist.Mode), "never") || *dryRun {
 		st = store.Stateless{}
 	} else {
 		opened, closeStore, err := newStore(cfg, effectiveStateDir)
@@ -498,7 +498,7 @@ func finalizeCmd(args []string) error {
 		return err
 	}
 	var st store.Store
-	if cfg.Mode == config.ModeStateless {
+	if cfg.Mode == config.ModeStateless || *dryRun {
 		st = store.Stateless{}
 	} else {
 		opened, closeStore, err := newStore(cfg, *stateDir)
