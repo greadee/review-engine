@@ -330,12 +330,13 @@ func run(args []string) error {
 		}
 	}
 
+	ghToken := cfg.GitHubToken
 	// Remote archive: only when the persist policy allowed writing.
 	if !cfg.Local.Enabled && *publish && !*dryRun && res.Persisted {
 		if !hasRepo {
 			return fmt.Errorf("--repository is required to publish")
 		}
-		gh := vcs.NewGitHub("")
+		gh := vcs.NewGitHub(ghToken)
 		url, err := eng.Publish(context.Background(), gh, owner, name, res)
 		if err != nil {
 			return err
@@ -350,7 +351,7 @@ func run(args []string) error {
 		if !hasRepo {
 			return fmt.Errorf("--repository is required to comment")
 		}
-		gh := vcs.NewGitHub("")
+		gh := vcs.NewGitHub(ghToken)
 		marker := fmt.Sprintf("<!-- revu:pr=%d -->", c.pr)
 		if err := gh.UpsertComment(context.Background(), owner, name, c.pr, marker, report.SummaryMarkdown(res.Run)); err != nil {
 			return err
@@ -548,7 +549,7 @@ func finalizeCmd(args []string) error {
 		if err != nil {
 			return err
 		}
-		gh := vcs.NewGitHub("")
+		gh := vcs.NewGitHub(cfg.GitHubToken)
 		if *publish {
 			url, err := eng.Publish(context.Background(), gh, owner, name, res)
 			if err != nil {
@@ -605,7 +606,7 @@ func issueReview(args []string) error {
 		return err
 	}
 	ctx := context.Background()
-	gh := vcs.NewGitHub("")
+	gh := vcs.NewGitHub(cfg.GitHubToken)
 	issue, err := gh.GetIssue(ctx, owner, name, *issueNum)
 	if err != nil {
 		return err

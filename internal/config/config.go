@@ -40,6 +40,9 @@ type Config struct {
 	Store StoreConfig `yaml:"store"`
 	// IssueReview controls issue-close behavior.
 	IssueReview IssueReviewConfig `yaml:"issueReview"`
+	// GitHubToken is an optional custom token for GitHub API access. When
+	// empty, NewGitHub falls back to the GITHUB_TOKEN environment variable.
+	GitHubToken string `yaml:"githubToken"`
 	// Profiles holds per-profile overrides so one config serves many review
 	// types (and, with a global config, many repositories).
 	Profiles map[string]ProfileOverride `yaml:"profiles"`
@@ -389,6 +392,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("REVIEW_STORE_PATH"); v != "" {
 		cfg.Store.Path = v
+	}
+	if v := os.Getenv("REVIEW_GITHUB_TOKEN"); v != "" {
+		cfg.GitHubToken = v
 	}
 }
 

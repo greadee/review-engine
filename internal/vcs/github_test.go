@@ -216,6 +216,28 @@ func TestDoRetriesOnRateLimitAndServerErrors(t *testing.T) {
 	}
 }
 
+func TestNewGitHubUsesConfiguredToken(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"login":"bot"}`))
+	}))
+	defer srv.Close()
+
+	c := NewGitHub("custom-token")
+	c.BaseURL = srv.URL
+	login, err := c.AuthenticatedLogin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if login != "bot" {
+		t.Fatalf("expected login=bot, got %q", login)
+	}
+	if gotAuth != "Bearer custom-token" {
+		t.Fatalf("expected Authorization: Bearer custom-token, got %q", gotAuth)
+	}
+}
+
 func TestGitHubCommentAndPublish(t *testing.T) {
 	var commented string
 	var branchCreated bool
