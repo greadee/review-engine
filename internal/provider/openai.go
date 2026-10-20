@@ -36,12 +36,18 @@ func NewOpenAI(cfg Config) *OpenAI {
 	if cfg.SupportsJSONFormat != nil {
 		supportsJSON = *cfg.SupportsJSONFormat
 	}
+	// Use a longer timeout when reasoning tokens are configured, since
+	// reasoning models need more time to produce their output.
+	timeout := 120 * time.Second
+	if cfg.MaxReasoningTokens > 0 {
+		timeout = 300 * time.Second
+	}
 	return &OpenAI{
 		baseURL:            base,
 		apiKey:             cfg.APIKey,
 		model:              cfg.Model,
 		supportsJSONFormat: supportsJSON,
-		http:               &http.Client{Timeout: 120 * time.Second},
+		http:               &http.Client{Timeout: timeout},
 	}
 }
 

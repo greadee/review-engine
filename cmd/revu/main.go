@@ -385,9 +385,10 @@ func buildProvider(cfg config.Config, dryRun bool) (provider.Provider, error) {
 		return nil, err
 	}
 	return provider.New(cfg.Provider.Name, provider.Config{
-		BaseURL: cfg.Provider.BaseURL,
-		APIKey:  cfg.Provider.APIKey(),
-		Model:   cfg.Provider.Model,
+		BaseURL:            cfg.Provider.BaseURL,
+		APIKey:             cfg.Provider.APIKey(),
+		Model:              cfg.Provider.Model,
+		MaxReasoningTokens: cfg.Provider.MaxReasoningTokens,
 	})
 }
 

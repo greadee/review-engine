@@ -58,6 +58,7 @@ type Config struct {
 	APIKey             string
 	Model              string
 	SupportsJSONFormat *bool
+	MaxReasoningTokens int
 }
 
 // Factory constructs a provider from configuration.

@@ -40,7 +40,22 @@ type Semantic struct {
 
 // New builds a semantic reviewer.
 func New(p provider.Provider, model string, maxReasoningTokens int, supportsJSONFormat *bool) *Semantic {
-	return &Semantic{Provider: p, Model: model, MaxTokens: 4096, MaxBatchFiles: 25, MaxBatchBytes: 150_000, MaxReasoningTokens: maxReasoningTokens, SupportsJSONFormat: supportsJSONFormat}
+	// Base budget of 8192 tokens is enough for non-reasoning models.
+	// When reasoning tokens are configured, add them to the budget so the
+	// model has room for reasoning + JSON output.
+	maxTokens := 8192
+	if maxReasoningTokens > 0 {
+		maxTokens += maxReasoningTokens
+	}
+	// Reasoning models produce verbose reasoning text; use smaller batches
+	// so the JSON output fits within the token budget.
+	maxBatchFiles := 25
+	maxBatchBytes := 150_000
+	if maxReasoningTokens > 0 {
+		maxBatchFiles = 8
+		maxBatchBytes = 80_000
+	}
+	return &Semantic{Provider: p, Model: model, MaxTokens: maxTokens, MaxBatchFiles: maxBatchFiles, MaxBatchBytes: maxBatchBytes, MaxReasoningTokens: maxReasoningTokens, SupportsJSONFormat: supportsJSONFormat}
 }
 
 // Coverage reports how a semantic pass was executed. Analyzed counts files in
