@@ -17,11 +17,12 @@ type Message struct {
 // Request is a completion request. Temperature is a pointer so a caller can
 // distinguish "unset" from "0.0"; the engine uses 0 for determinism.
 type Request struct {
-	Messages    []Message
-	Model       string
-	Temperature *float64
-	MaxTokens   int
-	JSON        bool
+	Messages           []Message
+	Model              string
+	Temperature        *float64
+	MaxTokens          int
+	JSON               bool
+	MaxReasoningTokens int
 }
 
 // Usage reports token consumption.

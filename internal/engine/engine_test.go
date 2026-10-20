@@ -63,7 +63,7 @@ func newEngine(t *testing.T, dir string, fake *provider.Fake, st store.Store) *E
 		Config:   cfg,
 		Repo:     repo,
 		Provider: fake,
-		Reviewer: reviewers.New(fake, "model"),
+		Reviewer: reviewers.New(fake, "model", 0),
 		Store:    st,
 	})
 }
@@ -289,7 +289,7 @@ func TestRunRangeStateless(t *testing.T) {
 	cfg.Review.Static = false
 	cfg.Mode = config.ModeStateless
 	repo, _ := vcs.Open(dir)
-	eng := New(Options{Config: cfg, Repo: repo, Provider: fake, Reviewer: reviewers.New(fake, "m"), Store: store.Stateless{}})
+	eng := New(Options{Config: cfg, Repo: repo, Provider: fake, Reviewer: reviewers.New(fake, "m", 0), Store: store.Stateless{}})
 
 	res, err := eng.RunRange(context.Background(), "pr", base, head, "o/r", "HEAD")
 	if err != nil {
@@ -425,7 +425,7 @@ func TestCoverageIncompleteOnLargePR(t *testing.T) {
 	cfg.Review.MaxFileBytes = 100
 	repo, _ := vcs.Open(dir)
 	fake := &provider.Fake{Responses: []string{`{"findings":[]}`}}
-	eng := New(Options{Config: cfg, Repo: repo, Provider: fake, Reviewer: reviewers.New(fake, "m"), Store: store.Stateless{}})
+	eng := New(Options{Config: cfg, Repo: repo, Provider: fake, Reviewer: reviewers.New(fake, "m", 0), Store: store.Stateless{}})
 
 	res, err := eng.RunRange(context.Background(), "pr", base, head, "o/r", "HEAD")
 	if err != nil {

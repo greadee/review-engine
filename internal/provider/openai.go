@@ -42,21 +42,28 @@ func NewOpenAI(cfg Config) *OpenAI {
 func (o *OpenAI) Name() string { return "openai-compatible" }
 
 type chatRequest struct {
-	Model          string          `json:"model"`
-	Messages       []Message       `json:"messages"`
-	Temperature    *float64        `json:"temperature,omitempty"`
-	MaxTokens      int             `json:"max_tokens,omitempty"`
-	ResponseFormat *responseFormat `json:"response_format,omitempty"`
+	Model              string          `json:"model"`
+	Messages           []Message       `json:"messages"`
+	Temperature        *float64        `json:"temperature,omitempty"`
+	MaxTokens          int             `json:"max_tokens,omitempty"`
+	ResponseFormat     *responseFormat `json:"response_format,omitempty"`
+	MaxReasoningTokens int             `json:"max_reasoning_tokens,omitempty"`
 }
 
 type responseFormat struct {
 	Type string `json:"type"`
 }
 
+type chatMessage struct {
+	Role            string `json:"role"`
+	Content         string `json:"content"`
+	ReasoningContent string `json:"reasoning_content"`
+}
+
 type chatResponse struct {
-	Model   string `json:"model"`
+	Model   string        `json:"model"`
 	Choices []struct {
-		Message Message `json:"message"`
+		Message chatMessage `json:"message"`
 	} `json:"choices"`
 	Usage Usage `json:"usage"`
 	Error *struct {
@@ -75,12 +82,18 @@ func (o *OpenAI) Complete(ctx context.Context, req Request) (Response, error) {
 		return Response{}, fmt.Errorf("provider: model is required")
 	}
 	body := chatRequest{
-		Model:       model,
-		Messages:    req.Messages,
-		Temperature: req.Temperature,
-		MaxTokens:   req.MaxTokens,
+		Model:              model,
+		Messages:           req.Messages,
+		Temperature:        req.Temperature,
+		MaxTokens:          req.MaxTokens,
+		MaxReasoningTokens: req.MaxReasoningTokens,
 	}
-	if req.JSON {
+	// Only send response_format for OpenAI-compatible endpoints that
+	// support it (OpenAI, Anthropic via proxy).  LM Studio / vLLM /
+	// Ollama reject "json_object" with a 400 error; the system prompt
+	// already instructs the model to return JSON, so we omit the field
+	// for those endpoints.
+	if req.JSON && strings.HasPrefix(o.baseURL, DefaultBaseURL) {
 		body.ResponseFormat = &responseFormat{Type: "json_object"}
 	}
 	payload, err := json.Marshal(body)
@@ -119,8 +132,12 @@ func (o *OpenAI) Complete(ctx context.Context, req Request) (Response, error) {
 	if len(parsed.Choices) == 0 {
 		return Response{}, fmt.Errorf("provider: empty choices")
 	}
+	text := parsed.Choices[0].Message.Content
+	if text == "" && parsed.Choices[0].Message.ReasoningContent != "" {
+		text = parsed.Choices[0].Message.ReasoningContent
+	}
 	return Response{
-		Text:  parsed.Choices[0].Message.Content,
+		Text:  text,
 		Usage: parsed.Usage,
 		Model: parsed.Model,
 	}, nil

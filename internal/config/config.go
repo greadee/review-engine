@@ -83,6 +83,11 @@ type ProviderConfig struct {
 	// GlobalProviderBaseURLs); a repository's revu.yaml is ignored for this
 	// decision because a pull request can modify it.
 	AllowedBaseURLs []string `yaml:"allowedBaseUrls"`
+	// MaxReasoningTokens bounds the reasoning chain length for reasoning
+	// models (qwen3.5-32b-a3b, o3, etc.).  Zero means unlimited (existing
+	// behaviour).  When > 0 the request sends max_reasoning_tokens so the
+	// model stops reasoning before exceeding the HTTP timeout.
+	MaxReasoningTokens int `yaml:"maxReasoningTokens"`
 }
 
 // ReviewConfig controls analysis passes.
@@ -395,6 +400,11 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("REVIEW_GITHUB_TOKEN"); v != "" {
 		cfg.GitHubToken = v
+	}
+	if v := os.Getenv("REVIEW_MAX_REASONING_TOKENS"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			cfg.Provider.MaxReasoningTokens = n
+		}
 	}
 }
 

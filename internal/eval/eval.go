@@ -233,7 +233,7 @@ func runFixture(ctx context.Context, fix Fixture, prov provider.Provider) (Fixtu
 		Config:   cfg,
 		Repo:     repo,
 		Provider: prov,
-		Reviewer: reviewers.New(prov, "eval"),
+		Reviewer: reviewers.New(prov, "eval", 0),
 		Store:    store.Stateless{},
 	})
 	res, err := eng.RunRange(ctx, fix.Meta.Profile, base, head, "eval/"+fix.Name, "HEAD")
