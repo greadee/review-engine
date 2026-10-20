@@ -124,9 +124,9 @@ func TestOpenAICompleteNonOpenAIURL(t *testing.T) {
 	p := NewOpenAI(Config{BaseURL: srv.URL, APIKey: "secret", Model: "test-model"})
 	zero := 0.0
 	_, err := p.Complete(context.Background(), Request{
-		Messages:   []Message{{Role: "user", Content: "hi"}},
+		Messages:    []Message{{Role: "user", Content: "hi"}},
 		Temperature: &zero,
-		JSON:       true,
+		JSON:        true,
 	})
 	if err != nil {
 		t.Fatalf("complete: %v", err)
