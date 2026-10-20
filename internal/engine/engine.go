@@ -110,15 +110,21 @@ type gatherStats struct {
 	truncatedBytes int
 }
 
-func (e *Engine) gather(ref string, paths []string) gatherStats {
+func (e *Engine) gather(ref string, paths []string, wholeRepo bool) gatherStats {
 	maxFiles := e.opts.Config.Review.MaxFiles
 	maxBytes := e.opts.Config.Review.MaxFileBytes
 	if maxFiles <= 0 {
 		maxFiles = 60
 	}
+	// Whole-repo profiles (audit/sprint) review the entire codebase; the maxFiles
+	// cap exists for PR diffs where it makes sense to bound token usage.  It
+	// must not truncate audit or sprint scans.
+	if wholeRepo {
+		maxFiles = 0 // disable the cap: 0 means "unlimited"
+	}
 	var g gatherStats
 	for _, p := range paths {
-		if len(g.files) >= maxFiles {
+		if maxFiles > 0 && len(g.files) >= maxFiles {
 			g.skipped++
 			continue
 		}

@@ -60,7 +60,7 @@ func (e *Engine) Collect(ctx context.Context, profile, base, head, repository, r
 		}
 	}
 
-	gathered := e.gather(head, sc.Files)
+	gathered := e.gather(head, sc.Files, wholeRepo)
 	return bundle.Bundle{
 		Version:        bundle.Version,
 		Profile:        profile,
@@ -200,8 +200,11 @@ func evidenceKey(path string) string {
 }
 
 // evidenceMatches reports whether a finding cites a file present in the
-// reviewed source, with an in-range line and (when given) a snippet that occurs
-// in that file. Findings that fail this are marked unverified.
+// reviewed source with an in-range line. It deliberately does not require the
+// snippet to appear in the file: static analyzers put the diagnostic message
+// there rather than source text, and the security requirement is that a
+// blocking finding cites a verified file and line. Findings that fail this are
+// marked unverified and cannot block.
 func evidenceMatches(f findings.Finding, source map[string]string) bool {
 	key := evidenceKey(f.Evidence.File)
 	if key == "" {
@@ -211,12 +214,7 @@ func evidenceMatches(f findings.Finding, source map[string]string) bool {
 	if !ok {
 		return false
 	}
-	if f.Evidence.Line > 0 {
-		if f.Evidence.Line > strings.Count(content, "\n")+1 {
-			return false
-		}
-	}
-	if snippet := strings.TrimSpace(f.Evidence.Snippet); snippet != "" && !strings.Contains(content, snippet) {
+	if f.Evidence.Line > 0 && f.Evidence.Line > strings.Count(content, "\n")+1 {
 		return false
 	}
 	return true

@@ -40,6 +40,9 @@ type Config struct {
 	Store StoreConfig `yaml:"store"`
 	// IssueReview controls issue-close behavior.
 	IssueReview IssueReviewConfig `yaml:"issueReview"`
+	// GitHubToken is an optional custom token for GitHub API access. When
+	// empty, NewGitHub falls back to the GITHUB_TOKEN environment variable.
+	GitHubToken string `yaml:"githubToken"`
 	// Profiles holds per-profile overrides so one config serves many review
 	// types (and, with a global config, many repositories).
 	Profiles map[string]ProfileOverride `yaml:"profiles"`
@@ -80,6 +83,17 @@ type ProviderConfig struct {
 	// GlobalProviderBaseURLs); a repository's revu.yaml is ignored for this
 	// decision because a pull request can modify it.
 	AllowedBaseURLs []string `yaml:"allowedBaseUrls"`
+	// MaxReasoningTokens bounds the reasoning chain length for reasoning
+	// models (qwen3.5-32b-a3b, o3, etc.).  Zero means unlimited (existing
+	// behaviour).  When > 0 the request sends max_reasoning_tokens so the
+	// model stops reasoning before exceeding the HTTP timeout.
+	MaxReasoningTokens int `yaml:"maxReasoningTokens"`
+	// SupportsJSONFormat controls whether the provider accepts the
+	// response_format: {"type":"json_object"} parameter.  True by default;
+	// set false for providers that reject it (LM Studio, vLLM, Ollama,
+	// and reasoning models).  When false the semantic pass relies on
+	// parseOutput to extract JSON from the model's free-text output.
+	SupportsJSONFormat *bool `yaml:"supportsJsonFormat"`
 }
 
 // ReviewConfig controls analysis passes.
@@ -389,6 +403,14 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("REVIEW_STORE_PATH"); v != "" {
 		cfg.Store.Path = v
+	}
+	if v := os.Getenv("REVIEW_GITHUB_TOKEN"); v != "" {
+		cfg.GitHubToken = v
+	}
+	if v := os.Getenv("REVIEW_MAX_REASONING_TOKENS"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			cfg.Provider.MaxReasoningTokens = n
+		}
 	}
 }
 

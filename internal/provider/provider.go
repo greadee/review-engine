@@ -17,11 +17,17 @@ type Message struct {
 // Request is a completion request. Temperature is a pointer so a caller can
 // distinguish "unset" from "0.0"; the engine uses 0 for determinism.
 type Request struct {
-	Messages    []Message
-	Model       string
-	Temperature *float64
-	MaxTokens   int
-	JSON        bool
+	Messages           []Message
+	Model              string
+	Temperature        *float64
+	MaxTokens          int
+	JSON               bool
+	MaxReasoningTokens int
+	// SupportsJSONFormat overrides whether to send response_format.
+	// When nil (default), the provider's default applies (true for OpenAI,
+	// false for providers that reject json_object — LM Studio, reasoning
+	// models, etc.).  When non-nil, honour the explicit value.
+	SupportsJSONFormat *bool
 }
 
 // Usage reports token consumption.
@@ -48,9 +54,11 @@ type Provider interface {
 
 // Config configures a provider factory.
 type Config struct {
-	BaseURL string
-	APIKey  string
-	Model   string
+	BaseURL            string
+	APIKey             string
+	Model              string
+	SupportsJSONFormat *bool
+	MaxReasoningTokens int
 }
 
 // Factory constructs a provider from configuration.

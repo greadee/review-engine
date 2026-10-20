@@ -1,0 +1,40 @@
+profile: pr
+mode: tracking
+
+provider:
+  name: openai-compatible
+  baseUrl: http://host.docker.internal:1234/v1
+  model: qwen/qwen3.6-35b-a3b
+  allowedBaseUrls:
+    - http://host.docker.internal:1234/v1
+  maxReasoningTokens: 2048
+  supportsJsonFormat: false
+
+review:
+  static: true
+  semantic: true
+  maxFiles: 60
+  maxFileBytes: 200000
+  blockThreshold: P1
+  coverageThreshold: 1.0
+
+archive:
+  enabled: true
+  branch: review-artifacts
+  dir: runs
+
+local:
+  enabled: false
+  dir: .review-engine
+
+persist:
+  mode: always
+  risk: P2
+
+store:
+  sqlite: false
+  path: ""
+
+ignore:
+  - "vendor/**"
+  - "**/*.md"

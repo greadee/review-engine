@@ -68,6 +68,7 @@ func runRuff(ctx context.Context, dir, ruff string, files []string) ([]findings.
 	args := append([]string{"check", "--output-format", "concise", "--no-cache"}, files...)
 	cmd := exec.CommandContext(ctx, ruff, args...)
 	cmd.Dir = dir
+	cmd.Env = childEnv()
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -98,20 +99,52 @@ func compileCheck(ctx context.Context, dir, py string, files []string) ([]findin
 	args := append([]string{"-m", "py_compile"}, files...)
 	cmd := exec.CommandContext(ctx, py, args...)
 	cmd.Dir = dir
+	cmd.Env = childEnv()
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	if err := cmd.Run(); err == nil {
 		return nil, nil
 	}
-	return []findings.Finding{{
-		Title:          "Python file failed to compile",
-		Classification: findings.Bug,
-		Severity:       findings.P1,
-		Evidence:       findings.Evidence{Snippet: strings.TrimSpace(out.String())},
-		Detector:       "static.python.compile",
-		Anchor:         "compile",
-	}}, nil
+	return parseCompileErrors(strings.TrimSpace(out.String())), nil
+}
+
+// compileError matches Python compile errors: "  File "path", line N: msg".
+var compileError = regexp.MustCompile(`\s*File "([^"]+)", line (\d+):\s*(.*)`)
+
+// parseCompileErrors extracts per-file compile errors from the Python compiler
+// output so each finding carries file and line evidence that can block.
+func parseCompileErrors(output string) []findings.Finding {
+	var found []findings.Finding
+	for _, line := range strings.Split(output, "\n") {
+		m := compileError.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		file := cleanPath(m[1])
+		lineNo, _ := strconv.Atoi(m[2])
+		msg := strings.TrimSpace(m[3])
+		found = append(found, findings.Finding{
+			Title:          fmt.Sprintf("Python compile: %s", msg),
+			Classification: findings.Bug,
+			Severity:       findings.P1,
+			Evidence:       findings.Evidence{File: file, Line: lineNo, Snippet: msg},
+			Detector:       "static.python.compile",
+			Anchor:         "compile:" + file + ":" + strconv.Itoa(lineNo),
+		})
+	}
+	if len(found) == 0 {
+		// Fallback: no per-line errors found, emit a single unverified finding.
+		return []findings.Finding{{
+			Title:          "Python file failed to compile",
+			Classification: findings.Bug,
+			Severity:       findings.P1,
+			Evidence:       findings.Evidence{Snippet: output},
+			Detector:       "static.python.compile",
+			Anchor:         "compile",
+		}}
+	}
+	return found
 }
 
 func filterExt(paths []string, ext string) []string {

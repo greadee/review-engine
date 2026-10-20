@@ -63,7 +63,7 @@ func newEngine(t *testing.T, dir string, fake *provider.Fake, st store.Store) *E
 		Config:   cfg,
 		Repo:     repo,
 		Provider: fake,
-		Reviewer: reviewers.New(fake, "model"),
+		Reviewer: reviewers.New(fake, "model", 0, nil),
 		Store:    st,
 	})
 }
@@ -289,7 +289,7 @@ func TestRunRangeStateless(t *testing.T) {
 	cfg.Review.Static = false
 	cfg.Mode = config.ModeStateless
 	repo, _ := vcs.Open(dir)
-	eng := New(Options{Config: cfg, Repo: repo, Provider: fake, Reviewer: reviewers.New(fake, "m"), Store: store.Stateless{}})
+	eng := New(Options{Config: cfg, Repo: repo, Provider: fake, Reviewer: reviewers.New(fake, "m", 0, nil), Store: store.Stateless{}})
 
 	res, err := eng.RunRange(context.Background(), "pr", base, head, "o/r", "HEAD")
 	if err != nil {
@@ -425,7 +425,7 @@ func TestCoverageIncompleteOnLargePR(t *testing.T) {
 	cfg.Review.MaxFileBytes = 100
 	repo, _ := vcs.Open(dir)
 	fake := &provider.Fake{Responses: []string{`{"findings":[]}`}}
-	eng := New(Options{Config: cfg, Repo: repo, Provider: fake, Reviewer: reviewers.New(fake, "m"), Store: store.Stateless{}})
+	eng := New(Options{Config: cfg, Repo: repo, Provider: fake, Reviewer: reviewers.New(fake, "m", 0, nil), Store: store.Stateless{}})
 
 	res, err := eng.RunRange(context.Background(), "pr", base, head, "o/r", "HEAD")
 	if err != nil {
@@ -449,5 +449,107 @@ func TestCoverageIncompleteOnLargePR(t *testing.T) {
 	}
 	if res.Run.Recommendation() != "Incomplete — required scope was not fully reviewed" {
 		t.Fatalf("unexpected verdict %q", res.Run.Recommendation())
+	}
+}
+
+// TestAuditSprintProfilesIgnoreMaxFiles is the regression test for #12:
+// whole-repo profiles (audit/sprint) must not hit the maxFiles cap, so they
+// don't always report INCOMPLETE coverage.
+func TestAuditSprintProfilesIgnoreMaxFiles(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q")
+
+	// Create 120 files (well above the default maxFiles=60).
+	for i := 0; i < 120; i++ {
+		writeFile(t, dir, fmt.Sprintf("pkg/f%03d.go", i), fmt.Sprintf("package pkg\n\nvar V%03d = %d\n", i, i))
+	}
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "base")
+	base := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	cfg := config.Default()
+	cfg.Review.Static = false
+	cfg.Review.Semantic = false
+	cfg.Review.MaxFiles = 60 // default cap that should NOT apply to audit/sprint
+	repo, _ := vcs.Open(dir)
+	eng := New(Options{Config: cfg, Repo: repo, Store: store.Stateless{}})
+
+	// Audit profile: should analyze ALL files, not stop at 60.
+	res, err := eng.RunRange(context.Background(), "audit", base, base, "o/r", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Run.Coverage.Selected != 120 {
+		t.Fatalf("audit profile should see all 120 files, got selected=%d", res.Run.Coverage.Selected)
+	}
+	if res.Run.Coverage.Skipped != 0 {
+		t.Fatalf("audit profile should skip 0 files, got skipped=%d", res.Run.Coverage.Skipped)
+	}
+	if !res.Run.Coverage.Complete() {
+		t.Fatalf("audit coverage with 120 files must be complete, got %+v", res.Run.Coverage)
+	}
+
+	// Sprint profile: same behavior.
+	res2, err := eng.RunRange(context.Background(), "sprint", base, base, "o/r", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res2.Run.Coverage.Selected != 120 {
+		t.Fatalf("sprint profile should see all 120 files, got selected=%d", res2.Run.Coverage.Selected)
+	}
+	if res2.Run.Coverage.Skipped != 0 {
+		t.Fatalf("sprint profile should skip 0 files, got skipped=%d", res2.Run.Coverage.Skipped)
+	}
+	if !res2.Run.Coverage.Complete() {
+		t.Fatalf("sprint coverage with 120 files must be complete, got %+v", res2.Run.Coverage)
+	}
+}
+
+// TestStaticBuildFindingIsVerifiedAndBlocks is the regression test for #9:
+// a static analyzer finding cites a file and line, and its snippet is the
+// analyzer's diagnostic message (not source text). Evidence verification must
+// therefore check file/line correspondence, not snippet containment — otherwise
+// a broken build is marked unverified and never blocks.
+func TestStaticBuildFindingIsVerifiedAndBlocks(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q")
+	writeFile(t, dir, "go.mod", "module badgo\n\ngo 1.26\n")
+	writeFile(t, dir, "bad.go", "package badgo\n\nfunc F() int { return 1 }\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "base")
+	base := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+	writeFile(t, dir, "bad.go", "package badgo\n\nfunc F() int { return undefinedThing() }\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "head")
+	head := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	cfg := config.Default()
+	cfg.Review.Static = true
+	cfg.Review.Semantic = false
+	cfg.Review.MaxFiles = 50
+	repo, _ := vcs.Open(dir)
+	eng := New(Options{Config: cfg, Repo: repo, Store: store.Stateless{}})
+
+	res, err := eng.RunRange(context.Background(), "pr", base, head, "o/r", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var build *findings.Finding
+	for i := range res.Findings {
+		if res.Findings[i].Detector == "static.gobuild" {
+			build = &res.Findings[i]
+		}
+	}
+	if build == nil {
+		t.Fatalf("expected a static.gobuild finding, got %+v", res.Findings)
+	}
+	if build.Unverified {
+		t.Fatalf("a build finding citing a real file and line must be verified: %+v", *build)
+	}
+	if build.Severity != findings.P1 {
+		t.Fatalf("build failure should be P1, got %s", build.Severity)
+	}
+	if len(res.Run.Blocking()) == 0 {
+		t.Fatalf("a broken build must produce a blocking finding, got %+v", res.Run.NonBlocking())
 	}
 }

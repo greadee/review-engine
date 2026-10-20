@@ -250,7 +250,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	reviewer := reviewers.New(prov, cfg.Provider.Model)
+	reviewer := reviewers.New(prov, cfg.Provider.Model, cfg.Provider.MaxReasoningTokens, cfg.Provider.SupportsJSONFormat)
 
 	// Local mode stores tracking state under the project folder and never
 	// touches GitHub.
@@ -260,7 +260,7 @@ func run(args []string) error {
 		effectiveStateDir = filepath.Join(cfg.Local.Dir, project)
 	}
 	var st store.Store
-	if cfg.Mode == config.ModeStateless || strings.EqualFold(strings.TrimSpace(cfg.Persist.Mode), "never") {
+	if cfg.Mode == config.ModeStateless || strings.EqualFold(strings.TrimSpace(cfg.Persist.Mode), "never") || *dryRun {
 		st = store.Stateless{}
 	} else {
 		opened, closeStore, err := newStore(cfg, effectiveStateDir)
@@ -330,12 +330,13 @@ func run(args []string) error {
 		}
 	}
 
+	ghToken := cfg.GitHubToken
 	// Remote archive: only when the persist policy allowed writing.
 	if !cfg.Local.Enabled && *publish && !*dryRun && res.Persisted {
 		if !hasRepo {
 			return fmt.Errorf("--repository is required to publish")
 		}
-		gh := vcs.NewGitHub("")
+		gh := vcs.NewGitHub(ghToken)
 		url, err := eng.Publish(context.Background(), gh, owner, name, res)
 		if err != nil {
 			return err
@@ -350,8 +351,8 @@ func run(args []string) error {
 		if !hasRepo {
 			return fmt.Errorf("--repository is required to comment")
 		}
-		gh := vcs.NewGitHub("")
-		marker := fmt.Sprintf("<!-- revu:run=%s -->", res.Run.ID)
+		gh := vcs.NewGitHub(ghToken)
+		marker := fmt.Sprintf("<!-- revu:pr=%d -->", c.pr)
 		if err := gh.UpsertComment(context.Background(), owner, name, c.pr, marker, report.SummaryMarkdown(res.Run)); err != nil {
 			return err
 		}
@@ -384,9 +385,10 @@ func buildProvider(cfg config.Config, dryRun bool) (provider.Provider, error) {
 		return nil, err
 	}
 	return provider.New(cfg.Provider.Name, provider.Config{
-		BaseURL: cfg.Provider.BaseURL,
-		APIKey:  cfg.Provider.APIKey(),
-		Model:   cfg.Provider.Model,
+		BaseURL:            cfg.Provider.BaseURL,
+		APIKey:             cfg.Provider.APIKey(),
+		Model:              cfg.Provider.Model,
+		MaxReasoningTokens: cfg.Provider.MaxReasoningTokens,
 	})
 }
 
@@ -498,7 +500,7 @@ func finalizeCmd(args []string) error {
 		return err
 	}
 	var st store.Store
-	if cfg.Mode == config.ModeStateless {
+	if cfg.Mode == config.ModeStateless || *dryRun {
 		st = store.Stateless{}
 	} else {
 		opened, closeStore, err := newStore(cfg, *stateDir)
@@ -511,7 +513,7 @@ func finalizeCmd(args []string) error {
 	eng := engine.New(engine.Options{
 		Config:   cfg,
 		Provider: prov,
-		Reviewer: reviewers.New(prov, cfg.Provider.Model),
+		Reviewer: reviewers.New(prov, cfg.Provider.Model, cfg.Provider.MaxReasoningTokens, cfg.Provider.SupportsJSONFormat),
 		Store:    st,
 	})
 	res, err := eng.Finalize(context.Background(), b)
@@ -548,7 +550,7 @@ func finalizeCmd(args []string) error {
 		if err != nil {
 			return err
 		}
-		gh := vcs.NewGitHub("")
+		gh := vcs.NewGitHub(cfg.GitHubToken)
 		if *publish {
 			url, err := eng.Publish(context.Background(), gh, owner, name, res)
 			if err != nil {
@@ -558,9 +560,8 @@ func finalizeCmd(args []string) error {
 			fmt.Printf("\narchived findings: %s\n", url)
 		}
 		if *comment && c.pr > 0 {
-			body := report.SummaryMarkdown(res.Run)
-			marker := fmt.Sprintf("<!-- revu:run=%s -->", res.Run.ID)
-			if err := gh.UpsertComment(context.Background(), owner, name, c.pr, marker, body); err != nil {
+			marker := fmt.Sprintf("<!-- revu:pr=%d -->", c.pr)
+			if err := gh.UpsertComment(context.Background(), owner, name, c.pr, marker, report.SummaryMarkdown(res.Run)); err != nil {
 				return err
 			}
 			fmt.Printf("posted comment on PR #%d\n", c.pr)
@@ -606,7 +607,7 @@ func issueReview(args []string) error {
 		return err
 	}
 	ctx := context.Background()
-	gh := vcs.NewGitHub("")
+	gh := vcs.NewGitHub(cfg.GitHubToken)
 	issue, err := gh.GetIssue(ctx, owner, name, *issueNum)
 	if err != nil {
 		return err

@@ -291,17 +291,36 @@ func (c *GitHub) do(ctx context.Context, method, path string, in, out any) error
 		}
 		body = bytes.NewReader(data)
 	}
-	status, respBody, err := c.raw(ctx, method, path, body)
-	if err != nil {
-		return err
-	}
-	if status < 200 || status >= 300 {
-		return fmt.Errorf("github: %s %s: status %d: %s", method, path, status, truncate(string(respBody), 300))
-	}
-	if out != nil && len(respBody) > 0 {
-		if err := json.Unmarshal(respBody, out); err != nil {
-			return fmt.Errorf("github: decode %s: %w", path, err)
+	const maxRetries = 3
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		status, respBody, err := c.raw(ctx, method, path, body)
+		if err != nil {
+			return err
 		}
+		if status < 200 || status >= 300 {
+			// Retry on rate limit (429) and server errors (5xx).
+			retryable := status == http.StatusTooManyRequests || status >= 500
+			if !retryable || attempt == maxRetries {
+				return fmt.Errorf("github: %s %s: status %d: %s", method, path, status, truncate(string(respBody), 300))
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(attempt+1) * 500 * time.Millisecond):
+			}
+			// Reset body reader for retry (only needed for POST/PUT).
+			if in != nil {
+				data, _ := json.Marshal(in)
+				body = bytes.NewReader(data)
+			}
+			continue
+		}
+		if out != nil && len(respBody) > 0 {
+			if err := json.Unmarshal(respBody, out); err != nil {
+				return fmt.Errorf("github: decode %s: %w", path, err)
+			}
+		}
+		return nil
 	}
 	return nil
 }

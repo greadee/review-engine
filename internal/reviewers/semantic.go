@@ -27,18 +27,35 @@ type Input struct {
 
 // Semantic is a model-backed reviewer.
 type Semantic struct {
-	Provider  provider.Provider
-	Model     string
-	MaxTokens int
-	// MaxBatchFiles and MaxBatchBytes bound one provider request so a large PR
-	// is reviewed in deterministic batches instead of one oversized call.
-	MaxBatchFiles int
-	MaxBatchBytes int
+	Provider           provider.Provider
+	Model              string
+	MaxTokens          int
+	MaxBatchFiles      int
+	MaxBatchBytes      int
+	MaxReasoningTokens int
+	// SupportsJSONFormat controls whether response_format is sent.
+	// nil means the provider default applies.  false means omit it.
+	SupportsJSONFormat *bool
 }
 
 // New builds a semantic reviewer.
-func New(p provider.Provider, model string) *Semantic {
-	return &Semantic{Provider: p, Model: model, MaxTokens: 4096, MaxBatchFiles: 25, MaxBatchBytes: 150_000}
+func New(p provider.Provider, model string, maxReasoningTokens int, supportsJSONFormat *bool) *Semantic {
+	// Base budget of 8192 tokens is enough for non-reasoning models.
+	// When reasoning tokens are configured, add them to the budget so the
+	// model has room for reasoning + JSON output.
+	maxTokens := 8192
+	if maxReasoningTokens > 0 {
+		maxTokens += maxReasoningTokens
+	}
+	// Reasoning models produce verbose reasoning text; use smaller batches
+	// so the JSON output fits within the token budget.
+	maxBatchFiles := 25
+	maxBatchBytes := 150_000
+	if maxReasoningTokens > 0 {
+		maxBatchFiles = 8
+		maxBatchBytes = 80_000
+	}
+	return &Semantic{Provider: p, Model: model, MaxTokens: maxTokens, MaxBatchFiles: maxBatchFiles, MaxBatchBytes: maxBatchBytes, MaxReasoningTokens: maxReasoningTokens, SupportsJSONFormat: supportsJSONFormat}
 }
 
 // Coverage reports how a semantic pass was executed. Analyzed counts files in
@@ -82,10 +99,12 @@ func (s *Semantic) Review(ctx context.Context, in Input) ([]findings.Finding, Co
 	cov := Coverage{Batches: len(batches)}
 	for _, batch := range batches {
 		req := provider.Request{
-			Model:       s.Model,
-			MaxTokens:   s.MaxTokens,
-			JSON:        true,
-			Temperature: zero(),
+			Model:              s.Model,
+			MaxTokens:          s.MaxTokens,
+			MaxReasoningTokens: s.MaxReasoningTokens,
+			JSON:               true,
+			SupportsJSONFormat: s.SupportsJSONFormat,
+			Temperature:        zero(),
 			Messages: []provider.Message{
 				{Role: "system", Content: systemPrompt()},
 				{Role: "user", Content: userPrompt(Input{Profile: in.Profile, Rubric: in.Rubric, Files: batch})},
@@ -196,16 +215,28 @@ func parseOutput(text string) (modelOutput, error) {
 	text = strings.TrimPrefix(text, "```json")
 	text = strings.TrimPrefix(text, "```")
 	text = strings.TrimSuffix(text, "```")
-	start := strings.Index(text, "{")
-	end := strings.LastIndex(text, "}")
-	if start < 0 || end <= start {
-		return modelOutput{}, fmt.Errorf("reviewer: model returned no JSON object")
+
+	// For reasoning models the text may contain reasoning discussion before
+	// the JSON.  Search for the last valid JSON object rather than blindly
+	// taking the first "{" to the last "}" (which can span reasoning text
+	// and produce invalid JSON).
+	for i := len(text) - 1; i >= 0; i-- {
+		if text[i] != '}' {
+			continue
+		}
+		// Look for the matching "{" before this "}"
+		for j := i - 1; j >= 0; j-- {
+			if text[j] != '{' {
+				continue
+			}
+			candidate := text[j : i+1]
+			var out modelOutput
+			if json.Unmarshal([]byte(candidate), &out) == nil {
+				return out, nil
+			}
+		}
 	}
-	var out modelOutput
-	if err := json.Unmarshal([]byte(text[start:end+1]), &out); err != nil {
-		return modelOutput{}, fmt.Errorf("reviewer: decode model output: %w", err)
-	}
-	return out, nil
+	return modelOutput{}, fmt.Errorf("reviewer: model returned no JSON object")
 }
 
 func zero() *float64 {

@@ -17,10 +17,11 @@ const DefaultBaseURL = "https://api.openai.com/v1"
 
 // OpenAI is a provider for any OpenAI-compatible chat-completions endpoint.
 type OpenAI struct {
-	baseURL string
-	apiKey  string
-	model   string
-	http    *http.Client
+	baseURL            string
+	apiKey             string
+	model              string
+	supportsJSONFormat bool
+	http               *http.Client
 }
 
 // NewOpenAI builds an OpenAI-compatible provider. An empty BaseURL or Model
@@ -30,11 +31,23 @@ func NewOpenAI(cfg Config) *OpenAI {
 	if base == "" {
 		base = DefaultBaseURL
 	}
+	// SupportsJSONFormat defaults to true when not set (nil).
+	supportsJSON := true
+	if cfg.SupportsJSONFormat != nil {
+		supportsJSON = *cfg.SupportsJSONFormat
+	}
+	// Use a longer timeout when reasoning tokens are configured, since
+	// reasoning models need more time to produce their output.
+	timeout := 120 * time.Second
+	if cfg.MaxReasoningTokens > 0 {
+		timeout = 300 * time.Second
+	}
 	return &OpenAI{
-		baseURL: base,
-		apiKey:  cfg.APIKey,
-		model:   cfg.Model,
-		http:    &http.Client{Timeout: 120 * time.Second},
+		baseURL:            base,
+		apiKey:             cfg.APIKey,
+		model:              cfg.Model,
+		supportsJSONFormat: supportsJSON,
+		http:               &http.Client{Timeout: timeout},
 	}
 }
 
@@ -42,21 +55,28 @@ func NewOpenAI(cfg Config) *OpenAI {
 func (o *OpenAI) Name() string { return "openai-compatible" }
 
 type chatRequest struct {
-	Model          string          `json:"model"`
-	Messages       []Message       `json:"messages"`
-	Temperature    *float64        `json:"temperature,omitempty"`
-	MaxTokens      int             `json:"max_tokens,omitempty"`
-	ResponseFormat *responseFormat `json:"response_format,omitempty"`
+	Model              string          `json:"model"`
+	Messages           []Message       `json:"messages"`
+	Temperature        *float64        `json:"temperature,omitempty"`
+	MaxTokens          int             `json:"max_tokens,omitempty"`
+	ResponseFormat     *responseFormat `json:"response_format,omitempty"`
+	MaxReasoningTokens int             `json:"max_reasoning_tokens,omitempty"`
 }
 
 type responseFormat struct {
 	Type string `json:"type"`
 }
 
+type chatMessage struct {
+	Role             string `json:"role"`
+	Content          string `json:"content"`
+	ReasoningContent string `json:"reasoning_content"`
+}
+
 type chatResponse struct {
 	Model   string `json:"model"`
 	Choices []struct {
-		Message Message `json:"message"`
+		Message chatMessage `json:"message"`
 	} `json:"choices"`
 	Usage Usage `json:"usage"`
 	Error *struct {
@@ -75,12 +95,23 @@ func (o *OpenAI) Complete(ctx context.Context, req Request) (Response, error) {
 		return Response{}, fmt.Errorf("provider: model is required")
 	}
 	body := chatRequest{
-		Model:       model,
-		Messages:    req.Messages,
-		Temperature: req.Temperature,
-		MaxTokens:   req.MaxTokens,
+		Model:              model,
+		Messages:           req.Messages,
+		Temperature:        req.Temperature,
+		MaxTokens:          req.MaxTokens,
+		MaxReasoningTokens: req.MaxReasoningTokens,
 	}
-	if req.JSON {
+	// Only send response_format for providers that support it.  Providers
+	// that reject "json_object" (LM Studio, vLLM, Ollama, reasoning models)
+	// set SupportsJSONFormat to false; the system prompt already instructs
+	// the model to return JSON, so we omit the field for those endpoints.
+	// When the request explicitly sets SupportsJSONFormat (non-nil), honour
+	// that override regardless of the provider's default.
+	supports := o.supportsJSONFormat
+	if req.SupportsJSONFormat != nil {
+		supports = *req.SupportsJSONFormat
+	}
+	if req.JSON && supports {
 		body.ResponseFormat = &responseFormat{Type: "json_object"}
 	}
 	payload, err := json.Marshal(body)
@@ -119,8 +150,12 @@ func (o *OpenAI) Complete(ctx context.Context, req Request) (Response, error) {
 	if len(parsed.Choices) == 0 {
 		return Response{}, fmt.Errorf("provider: empty choices")
 	}
+	text := parsed.Choices[0].Message.Content
+	if text == "" && parsed.Choices[0].Message.ReasoningContent != "" {
+		text = parsed.Choices[0].Message.ReasoningContent
+	}
 	return Response{
-		Text:  parsed.Choices[0].Message.Content,
+		Text:  text,
 		Usage: parsed.Usage,
 		Model: parsed.Model,
 	}, nil

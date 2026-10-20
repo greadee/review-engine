@@ -109,7 +109,7 @@ func TestForkSafeFlow(t *testing.T) {
 
 	// Phase 2 — finalize: secrets, no checkout.
 	fake := &provider.Fake{Responses: []string{`{"findings":[{"title":"command injection","classification":"Security","severity":"P0","file":"exec.go","line":6,"snippet":"exec.Command(\"sh\", \"-c\", in).Run()","anchor":"cmd-inj"}]}`}}
-	finalize := engine.New(engine.Options{Config: cfg, Provider: fake, Reviewer: reviewers.New(fake, "m"), Store: store.Stateless{}})
+	finalize := engine.New(engine.Options{Config: cfg, Provider: fake, Reviewer: reviewers.New(fake, "m", 0, nil), Store: store.Stateless{}})
 	res, err := finalize.Finalize(ctx, shipped)
 	if err != nil {
 		t.Fatal(err)
@@ -166,7 +166,7 @@ func TestForkSafeCleanPRPasses(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake := &provider.Fake{Responses: []string{`{"findings":[]}`}}
-	finalize := engine.New(engine.Options{Config: cfg, Provider: fake, Reviewer: reviewers.New(fake, "m"), Store: store.Stateless{}})
+	finalize := engine.New(engine.Options{Config: cfg, Provider: fake, Reviewer: reviewers.New(fake, "m", 0, nil), Store: store.Stateless{}})
 	res, err := finalize.Finalize(ctx, b)
 	if err != nil {
 		t.Fatal(err)

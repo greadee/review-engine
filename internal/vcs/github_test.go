@@ -124,6 +124,120 @@ func TestUpsertCommentCreatesWhenNone(t *testing.T) {
 	}
 }
 
+// TestUpsertCommentStableMarkerAcrossRuns proves that re-runs on the same PR
+// update the existing comment rather than accumulating new ones: the marker
+// is stable across runs with different run IDs.
+func TestUpsertCommentStableMarkerAcrossRuns(t *testing.T) {
+	var posted, patched bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/user":
+			_, _ = w.Write([]byte(`{"login":"bot"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/42/comments":
+			// First call: no existing comment with the stable marker.
+			if !posted {
+				_, _ = w.Write([]byte(`[]`))
+				break
+			}
+			// Second call: the first run already posted with the stable marker.
+			_, _ = w.Write([]byte(`[{"id":55,"body":"<!-- revu:pr=42 -->\nfirst run","user":{"login":"bot"}}]`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/repos/o/r/issues/comments/55":
+			patched = true
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues/42/comments":
+			posted = true
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewGitHub("token")
+	c.BaseURL = srv.URL
+	ctx := context.Background()
+
+	// First run: no prior comment, should create one.
+	if err := c.UpsertComment(ctx, "o", "r", 42, "<!-- revu:pr=42 -->", "first run"); err != nil {
+		t.Fatal(err)
+	}
+	if !posted {
+		t.Fatal("expected first run to create a comment")
+	}
+
+	// Second run with a different run ID but the same PR: should update, not duplicate.
+	if err := c.UpsertComment(ctx, "o", "r", 42, "<!-- revu:pr=42 -->", "second run"); err != nil {
+		t.Fatal(err)
+	}
+	if !patched {
+		t.Fatal("expected second run to patch the existing comment, not create a duplicate")
+	}
+}
+
+func TestDoRetriesOnRateLimitAndServerErrors(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls < 3 {
+			if r.URL.Path == "/rate-limited" {
+				w.Header().Set("Retry-After", "0")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"message":"rate limited"}`))
+				return
+			}
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"message":"server error"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	c := NewGitHub("token")
+	c.BaseURL = srv.URL
+
+	// Rate limit retry.
+	err := c.do(context.Background(), http.MethodGet, "/rate-limited", nil, nil)
+	if err != nil {
+		t.Fatalf("rate limit retry failed: %v", err)
+	}
+	if calls != 3 {
+		t.Fatalf("expected 3 calls for rate limit retry, got %d", calls)
+	}
+
+	// Server error retry.
+	calls = 0
+	err = c.do(context.Background(), http.MethodGet, "/server-error", nil, nil)
+	if err != nil {
+		t.Fatalf("server error retry failed: %v", err)
+	}
+	if calls != 3 {
+		t.Fatalf("expected 3 calls for server error retry, got %d", calls)
+	}
+}
+
+func TestNewGitHubUsesConfiguredToken(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"login":"bot"}`))
+	}))
+	defer srv.Close()
+
+	c := NewGitHub("custom-token")
+	c.BaseURL = srv.URL
+	login, err := c.AuthenticatedLogin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if login != "bot" {
+		t.Fatalf("expected login=bot, got %q", login)
+	}
+	if gotAuth != "Bearer custom-token" {
+		t.Fatalf("expected Authorization: Bearer custom-token, got %q", gotAuth)
+	}
+}
+
 func TestGitHubCommentAndPublish(t *testing.T) {
 	var commented string
 	var branchCreated bool

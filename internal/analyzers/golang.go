@@ -57,6 +57,7 @@ func (g Go) Analyze(ctx context.Context, t Target) ([]findings.Finding, error) {
 	// gofmt reports bare file paths rather than diagnostics.
 	gofmtCmd := exec.CommandContext(ctx, "gofmt", "-l", ".")
 	gofmtCmd.Dir = t.Dir
+	gofmtCmd.Env = childEnv()
 	if gofmtOut, err := gofmtCmd.Output(); err == nil {
 		for _, line := range strings.Split(strings.TrimSpace(string(gofmtOut)), "\n") {
 			line = strings.TrimSpace(line)
@@ -84,6 +85,7 @@ func runCheck(ctx context.Context, dir string, c check) ([]findings.Finding, err
 	}
 	cmd := exec.CommandContext(ctx, c.args[0], c.args[1:]...)
 	cmd.Dir = dir
+	cmd.Env = childEnv()
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
