@@ -27,11 +27,11 @@ type Input struct {
 
 // Semantic is a model-backed reviewer.
 type Semantic struct {
-	Provider         provider.Provider
-	Model            string
-	MaxTokens        int
-	MaxBatchFiles    int
-	MaxBatchBytes    int
+	Provider           provider.Provider
+	Model              string
+	MaxTokens          int
+	MaxBatchFiles      int
+	MaxBatchBytes      int
 	MaxReasoningTokens int
 }
 

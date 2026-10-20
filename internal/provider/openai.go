@@ -55,13 +55,13 @@ type responseFormat struct {
 }
 
 type chatMessage struct {
-	Role            string `json:"role"`
-	Content         string `json:"content"`
+	Role             string `json:"role"`
+	Content          string `json:"content"`
 	ReasoningContent string `json:"reasoning_content"`
 }
 
 type chatResponse struct {
-	Model   string        `json:"model"`
+	Model   string `json:"model"`
 	Choices []struct {
 		Message chatMessage `json:"message"`
 	} `json:"choices"`
