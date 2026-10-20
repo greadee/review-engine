@@ -13,7 +13,7 @@ func TestReviewParsesFindings(t *testing.T) {
 	fake := &provider.Fake{Responses: []string{
 		"```json\n{\"findings\":[{\"title\":\"Nil deref\",\"classification\":\"Bug\",\"severity\":\"P1\",\"file\":\"x.go\",\"line\":4,\"snippet\":\"f()\",\"impact\":\"crash\",\"recommendation\":\"guard\",\"anchor\":\"nil-deref\"}]}\n```",
 	}}
-	r := New(fake, "m", 0)
+	r := New(fake, "m", 0, nil)
 	got, cov, err := r.Review(context.Background(), Input{
 		Profile: "pr",
 		Rubric:  []string{"correctness"},
@@ -39,7 +39,7 @@ func TestReviewParsesFindings(t *testing.T) {
 
 func TestReviewNoFilesSkipsProvider(t *testing.T) {
 	fake := &provider.Fake{}
-	r := New(fake, "m", 0)
+	r := New(fake, "m", 0, nil)
 	got, _, err := r.Review(context.Background(), Input{})
 	if err != nil || len(got) != 0 {
 		t.Fatalf("expected no-op: %v %v", got, err)
@@ -51,7 +51,7 @@ func TestReviewNoFilesSkipsProvider(t *testing.T) {
 
 func TestReviewFallbacks(t *testing.T) {
 	fake := &provider.Fake{Responses: []string{`{"findings":[{"title":"weird","classification":"Nonsense","severity":"SEV1","file":"a.go"}]}`}}
-	r := New(fake, "m", 0)
+	r := New(fake, "m", 0, nil)
 	got, _, err := r.Review(context.Background(), Input{Files: []FileContent{{Path: "a.go"}}})
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +70,7 @@ func TestReviewBatchesAndRecordsFailures(t *testing.T) {
 		}
 		return `{"findings":[]}`, nil
 	}}
-	r := New(fake, "m", 0)
+	r := New(fake, "m", 0, nil)
 	r.MaxBatchFiles = 1 // one file per batch
 	files := []FileContent{{Path: "a.go"}, {Path: "b.go"}, {Path: "c.go"}}
 	_, cov, err := r.Review(context.Background(), Input{Files: files})

@@ -88,6 +88,12 @@ type ProviderConfig struct {
 	// behaviour).  When > 0 the request sends max_reasoning_tokens so the
 	// model stops reasoning before exceeding the HTTP timeout.
 	MaxReasoningTokens int `yaml:"maxReasoningTokens"`
+	// SupportsJSONFormat controls whether the provider accepts the
+	// response_format: {"type":"json_object"} parameter.  True by default;
+	// set false for providers that reject it (LM Studio, vLLM, Ollama,
+	// and reasoning models).  When false the semantic pass relies on
+	// parseOutput to extract JSON from the model's free-text output.
+	SupportsJSONFormat *bool `yaml:"supportsJsonFormat"`
 }
 
 // ReviewConfig controls analysis passes.

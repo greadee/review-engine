@@ -33,11 +33,14 @@ type Semantic struct {
 	MaxBatchFiles      int
 	MaxBatchBytes      int
 	MaxReasoningTokens int
+	// SupportsJSONFormat controls whether response_format is sent.
+	// nil means the provider default applies.  false means omit it.
+	SupportsJSONFormat *bool
 }
 
 // New builds a semantic reviewer.
-func New(p provider.Provider, model string, maxReasoningTokens int) *Semantic {
-	return &Semantic{Provider: p, Model: model, MaxTokens: 4096, MaxBatchFiles: 25, MaxBatchBytes: 150_000, MaxReasoningTokens: maxReasoningTokens}
+func New(p provider.Provider, model string, maxReasoningTokens int, supportsJSONFormat *bool) *Semantic {
+	return &Semantic{Provider: p, Model: model, MaxTokens: 4096, MaxBatchFiles: 25, MaxBatchBytes: 150_000, MaxReasoningTokens: maxReasoningTokens, SupportsJSONFormat: supportsJSONFormat}
 }
 
 // Coverage reports how a semantic pass was executed. Analyzed counts files in
@@ -85,6 +88,7 @@ func (s *Semantic) Review(ctx context.Context, in Input) ([]findings.Finding, Co
 			MaxTokens:          s.MaxTokens,
 			MaxReasoningTokens: s.MaxReasoningTokens,
 			JSON:               true,
+			SupportsJSONFormat: s.SupportsJSONFormat,
 			Temperature:        zero(),
 			Messages: []provider.Message{
 				{Role: "system", Content: systemPrompt()},

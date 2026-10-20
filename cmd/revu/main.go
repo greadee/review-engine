@@ -250,7 +250,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	reviewer := reviewers.New(prov, cfg.Provider.Model, cfg.Provider.MaxReasoningTokens)
+	reviewer := reviewers.New(prov, cfg.Provider.Model, cfg.Provider.MaxReasoningTokens, cfg.Provider.SupportsJSONFormat)
 
 	// Local mode stores tracking state under the project folder and never
 	// touches GitHub.
@@ -512,7 +512,7 @@ func finalizeCmd(args []string) error {
 	eng := engine.New(engine.Options{
 		Config:   cfg,
 		Provider: prov,
-		Reviewer: reviewers.New(prov, cfg.Provider.Model, cfg.Provider.MaxReasoningTokens),
+		Reviewer: reviewers.New(prov, cfg.Provider.Model, cfg.Provider.MaxReasoningTokens, cfg.Provider.SupportsJSONFormat),
 		Store:    st,
 	})
 	res, err := eng.Finalize(context.Background(), b)

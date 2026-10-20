@@ -8,6 +8,7 @@ provider:
   allowedBaseUrls:
     - http://host.docker.internal:1234/v1
   maxReasoningTokens: 2048
+  supportsJsonFormat: false
 
 review:
   static: true

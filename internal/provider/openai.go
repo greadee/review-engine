@@ -17,10 +17,11 @@ const DefaultBaseURL = "https://api.openai.com/v1"
 
 // OpenAI is a provider for any OpenAI-compatible chat-completions endpoint.
 type OpenAI struct {
-	baseURL string
-	apiKey  string
-	model   string
-	http    *http.Client
+	baseURL            string
+	apiKey             string
+	model              string
+	supportsJSONFormat bool
+	http               *http.Client
 }
 
 // NewOpenAI builds an OpenAI-compatible provider. An empty BaseURL or Model
@@ -30,11 +31,17 @@ func NewOpenAI(cfg Config) *OpenAI {
 	if base == "" {
 		base = DefaultBaseURL
 	}
+	// SupportsJSONFormat defaults to true when not set (nil).
+	supportsJSON := true
+	if cfg.SupportsJSONFormat != nil {
+		supportsJSON = *cfg.SupportsJSONFormat
+	}
 	return &OpenAI{
-		baseURL: base,
-		apiKey:  cfg.APIKey,
-		model:   cfg.Model,
-		http:    &http.Client{Timeout: 120 * time.Second},
+		baseURL:            base,
+		apiKey:             cfg.APIKey,
+		model:              cfg.Model,
+		supportsJSONFormat: supportsJSON,
+		http:               &http.Client{Timeout: 120 * time.Second},
 	}
 }
 
@@ -88,12 +95,17 @@ func (o *OpenAI) Complete(ctx context.Context, req Request) (Response, error) {
 		MaxTokens:          req.MaxTokens,
 		MaxReasoningTokens: req.MaxReasoningTokens,
 	}
-	// Only send response_format for OpenAI-compatible endpoints that
-	// support it (OpenAI, Anthropic via proxy).  LM Studio / vLLM /
-	// Ollama reject "json_object" with a 400 error; the system prompt
-	// already instructs the model to return JSON, so we omit the field
-	// for those endpoints.
-	if req.JSON && strings.HasPrefix(o.baseURL, DefaultBaseURL) {
+	// Only send response_format for providers that support it.  Providers
+	// that reject "json_object" (LM Studio, vLLM, Ollama, reasoning models)
+	// set SupportsJSONFormat to false; the system prompt already instructs
+	// the model to return JSON, so we omit the field for those endpoints.
+	// When the request explicitly sets SupportsJSONFormat (non-nil), honour
+	// that override regardless of the provider's default.
+	supports := o.supportsJSONFormat
+	if req.SupportsJSONFormat != nil {
+		supports = *req.SupportsJSONFormat
+	}
+	if req.JSON && supports {
 		body.ResponseFormat = &responseFormat{Type: "json_object"}
 	}
 	payload, err := json.Marshal(body)

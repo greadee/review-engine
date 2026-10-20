@@ -23,6 +23,11 @@ type Request struct {
 	MaxTokens          int
 	JSON               bool
 	MaxReasoningTokens int
+	// SupportsJSONFormat overrides whether to send response_format.
+	// When nil (default), the provider's default applies (true for OpenAI,
+	// false for providers that reject json_object — LM Studio, reasoning
+	// models, etc.).  When non-nil, honour the explicit value.
+	SupportsJSONFormat *bool
 }
 
 // Usage reports token consumption.
@@ -49,9 +54,10 @@ type Provider interface {
 
 // Config configures a provider factory.
 type Config struct {
-	BaseURL string
-	APIKey  string
-	Model   string
+	BaseURL            string
+	APIKey             string
+	Model              string
+	SupportsJSONFormat *bool
 }
 
 // Factory constructs a provider from configuration.
