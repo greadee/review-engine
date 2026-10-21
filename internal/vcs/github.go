@@ -105,39 +105,12 @@ func (c *GitHub) AuthenticatedLogin(ctx context.Context) (string, error) {
 	return u.Login, nil
 }
 
-type issueComment struct {
-	ID   int64  `json:"id"`
-	Body string `json:"body"`
-	User struct {
-		Login string `json:"login"`
-	} `json:"user"`
-}
-
-// UpsertComment posts a comment, or updates this actor's existing comment that
-// carries the same hidden marker. It keeps comments idempotent across runs
-// (re-runs update rather than duplicate) while leaving comments from other
-// authors untouched.
+// UpsertComment posts a new comment on an issue or pull request. Each call
+// produces an independent comment so that a series of review runs on the same
+// PR preserves the full history of findings over time. No prior comments are
+// looked up or updated.
 func (c *GitHub) UpsertComment(ctx context.Context, owner, repo string, number int, marker, body string) error {
-	login, err := c.AuthenticatedLogin(ctx)
-	if err != nil {
-		return err
-	}
 	want := marker + "\n\n" + body
-	for page := 1; page <= 10; page++ {
-		var comments []issueComment
-		path := fmt.Sprintf("/repos/%s/%s/issues/%d/comments?per_page=100&page=%d", owner, repo, number, page)
-		if err := c.do(ctx, http.MethodGet, path, nil, &comments); err != nil {
-			return err
-		}
-		for _, cm := range comments {
-			if cm.User.Login == login && strings.Contains(cm.Body, marker) {
-				return c.do(ctx, http.MethodPatch, fmt.Sprintf("/repos/%s/%s/issues/comments/%d", owner, repo, cm.ID), map[string]string{"body": want}, nil)
-			}
-		}
-		if len(comments) < 100 {
-			break
-		}
-	}
 	return c.Comment(ctx, owner, repo, number, want)
 }
 

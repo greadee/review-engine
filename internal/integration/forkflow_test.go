@@ -140,8 +140,8 @@ func TestForkSafeFlow(t *testing.T) {
 	if err := client.UpsertComment(ctx, "o", "r", 42, marker, "summary"); err != nil {
 		t.Fatal(err)
 	}
-	if n := gh.commentCount(); n != 1 {
-		t.Fatalf("reruns must upsert, not duplicate: got %d comments", n)
+	if n := gh.commentCount(); n != 2 {
+		t.Fatalf("reruns must post independent comments, not upsert: got %d comments", n)
 	}
 
 	// A blocking finding fails the check.

@@ -67,45 +67,20 @@ func TestPutFileRetriesOnConflict(t *testing.T) {
 	}
 }
 
-func TestUpsertCommentUpdatesOwn(t *testing.T) {
-	var patched, posted bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/user":
-			_, _ = w.Write([]byte(`{"login":"bot"}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/1/comments":
-			_, _ = w.Write([]byte(`[{"id":7,"body":"<!-- revu:run=x -->\nold","user":{"login":"bot"}}]`))
-		case r.Method == http.MethodPatch && r.URL.Path == "/repos/o/r/issues/comments/7":
-			patched = true
-			_, _ = w.Write([]byte(`{}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues/1/comments":
-			posted = true
-			_, _ = w.Write([]byte(`{}`))
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer srv.Close()
-
-	c := NewGitHub("token")
-	c.BaseURL = srv.URL
-	if err := c.UpsertComment(context.Background(), "o", "r", 1, "<!-- revu:run=x -->", "new"); err != nil {
-		t.Fatal(err)
-	}
-	if !patched || posted {
-		t.Fatalf("expected in-place update: patched=%v posted=%v", patched, posted)
-	}
-}
-
-func TestUpsertCommentCreatesWhenNone(t *testing.T) {
+// TestUpsertCommentPostsNewComment proves that UpsertComment always posts a new
+// comment without looking up or updating existing ones. Each invocation produces
+// an independent comment so that repeated review runs on the same PR preserve
+// the full history of findings over time.
+func TestUpsertCommentPostsNewComment(t *testing.T) {
 	var posted bool
+	var postedBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/user":
-			_, _ = w.Write([]byte(`{"login":"bot"}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/1/comments":
-			_, _ = w.Write([]byte(`[{"id":9,"body":"unrelated","user":{"login":"someone"}}]`))
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues/1/comments":
+			body, _ := io.ReadAll(r.Body)
+			var payload map[string]string
+			_ = json.Unmarshal(body, &payload)
+			postedBody = payload["body"]
 			posted = true
 			_, _ = w.Write([]byte(`{}`))
 		default:
@@ -120,32 +95,28 @@ func TestUpsertCommentCreatesWhenNone(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !posted {
-		t.Fatal("expected a new comment when no own marker exists")
+		t.Fatal("expected a new comment to be posted")
+	}
+	want := "<!-- revu:run=x -->\n\nnew"
+	if postedBody != want {
+		t.Fatalf("unexpected body: %q", postedBody)
 	}
 }
 
-// TestUpsertCommentStableMarkerAcrossRuns proves that re-runs on the same PR
-// update the existing comment rather than accumulating new ones: the marker
-// is stable across runs with different run IDs.
-func TestUpsertCommentStableMarkerAcrossRuns(t *testing.T) {
-	var posted, patched bool
+// TestUpsertCommentMultipleRunsAccumulate proves that repeated calls on the
+// same PR produce multiple independent comments, preserving the history of
+// each review run.
+func TestUpsertCommentMultipleRunsAccumulate(t *testing.T) {
+	var postedCount int
+	var postedBodies []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/user":
-			_, _ = w.Write([]byte(`{"login":"bot"}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/42/comments":
-			// First call: no existing comment with the stable marker.
-			if !posted {
-				_, _ = w.Write([]byte(`[]`))
-				break
-			}
-			// Second call: the first run already posted with the stable marker.
-			_, _ = w.Write([]byte(`[{"id":55,"body":"<!-- revu:pr=42 -->\nfirst run","user":{"login":"bot"}}]`))
-		case r.Method == http.MethodPatch && r.URL.Path == "/repos/o/r/issues/comments/55":
-			patched = true
-			_, _ = w.Write([]byte(`{}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues/42/comments":
-			posted = true
+			postedCount++
+			body, _ := io.ReadAll(r.Body)
+			var payload map[string]string
+			_ = json.Unmarshal(body, &payload)
+			postedBodies = append(postedBodies, payload["body"])
 			_, _ = w.Write([]byte(`{}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -157,20 +128,31 @@ func TestUpsertCommentStableMarkerAcrossRuns(t *testing.T) {
 	c.BaseURL = srv.URL
 	ctx := context.Background()
 
-	// First run: no prior comment, should create one.
+	// First run: posts a comment.
 	if err := c.UpsertComment(ctx, "o", "r", 42, "<!-- revu:pr=42 -->", "first run"); err != nil {
 		t.Fatal(err)
 	}
-	if !posted {
-		t.Fatal("expected first run to create a comment")
+	if postedCount != 1 {
+		t.Fatalf("expected 1 comment after first run, got %d", postedCount)
 	}
 
-	// Second run with a different run ID but the same PR: should update, not duplicate.
+	// Second run with a different body but the same PR: posts another comment.
 	if err := c.UpsertComment(ctx, "o", "r", 42, "<!-- revu:pr=42 -->", "second run"); err != nil {
 		t.Fatal(err)
 	}
-	if !patched {
-		t.Fatal("expected second run to patch the existing comment, not create a duplicate")
+	if postedCount != 2 {
+		t.Fatalf("expected 2 comments after second run, got %d", postedCount)
+	}
+	if len(postedBodies) != 2 {
+		t.Fatalf("expected 2 bodies, got %d", len(postedBodies))
+	}
+	firstWant := "<!-- revu:pr=42 -->\n\nfirst run"
+	secondWant := "<!-- revu:pr=42 -->\n\nsecond run"
+	if postedBodies[0] != firstWant {
+		t.Fatalf("first body: got %q, want %q", postedBodies[0], firstWant)
+	}
+	if postedBodies[1] != secondWant {
+		t.Fatalf("second body: got %q, want %q", postedBodies[1], secondWant)
 	}
 }
 
