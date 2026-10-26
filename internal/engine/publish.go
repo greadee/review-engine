@@ -24,6 +24,11 @@ func (e *Engine) Publish(ctx context.Context, gh *vcs.GitHub, owner, repo string
 	if branch == "" {
 		branch = "review-artifacts"
 	}
+	if e.opts.ArchiveGuard != nil {
+		if err := e.opts.ArchiveGuard(ctx, branch); err != nil {
+			return "", fmt.Errorf("engine: archive branch %q rejected: %w", branch, err)
+		}
+	}
 	dir := e.opts.Config.Archive.Dir
 	if dir == "" {
 		dir = "runs"

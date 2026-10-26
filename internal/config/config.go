@@ -214,15 +214,37 @@ func DefaultRubric() []string {
 // config.yaml), then the local file, then environment overrides. A missing file
 // is not an error.
 func Load(path string) (Config, error) {
+	if path == "" {
+		return LoadData(nil)
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return LoadData(nil)
+	}
+	if err != nil {
+		return Config{}, fmt.Errorf("config: read %s: %w", path, err)
+	}
+	cfg, err := LoadData(data)
+	if err != nil {
+		return Config{}, fmt.Errorf("config: parse %s: %w", path, err)
+	}
+	return cfg, nil
+}
+
+// LoadData builds the effective configuration from in-memory repository
+// configuration bytes. The global config and environment overrides are applied
+// around it, exactly as in Load. Callers use this when the repository config
+// must come from a trusted revision rather than the working tree.
+func LoadData(data []byte) (Config, error) {
 	cfg := Default()
 	if global := GlobalPath(); global != "" {
 		if err := applyFile(&cfg, global); err != nil {
 			return Config{}, err
 		}
 	}
-	if path != "" {
-		if err := applyFile(&cfg, path); err != nil {
-			return Config{}, err
+	if len(data) > 0 {
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return Config{}, fmt.Errorf("config: parse: %w", err)
 		}
 	}
 	applyEnv(&cfg)

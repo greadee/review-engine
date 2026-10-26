@@ -2,6 +2,7 @@ package vcs
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -270,5 +271,77 @@ func TestGitHubCommentAndPublish(t *testing.T) {
 	}
 	if !branchCreated || putPath != "/repos/o/r/contents/runs/x.json" || sha == "" {
 		t.Fatalf("publish failed: branch=%v path=%q sha=%q", branchCreated, putPath, sha)
+	}
+}
+
+func TestGitHubPullRequestFiles(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/repos/o/r/pulls/7/files" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`[{"filename":"a.go","status":"modified"},{"filename":"b.go","status":"removed"}]`))
+	}))
+	defer srv.Close()
+
+	c := NewGitHub("token")
+	c.BaseURL = srv.URL
+	files, err := c.PullRequestFiles(context.Background(), "o", "r", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 || files[0].Filename != "a.go" || files[1].Status != "removed" {
+		t.Fatalf("unexpected files: %+v", files)
+	}
+}
+
+func TestGitHubFileAtRef(t *testing.T) {
+	content := base64.StdEncoding.EncodeToString([]byte("ignore:\n  - docs/**\n"))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/contents/revu.yaml":
+			if r.URL.Query().Get("ref") != "base-sha" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_, _ = w.Write([]byte(`{"content":"` + content + `","encoding":"base64"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewGitHub("token")
+	c.BaseURL = srv.URL
+	data, found, err := c.FileAtRef(context.Background(), "o", "r", "revu.yaml", "base-sha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || string(data) != "ignore:\n  - docs/**\n" {
+		t.Fatalf("unexpected file: found=%v data=%q", found, data)
+	}
+	if _, found, err := c.FileAtRef(context.Background(), "o", "r", "revu.yaml", "missing"); err != nil || found {
+		t.Fatalf("missing file should be found=false: found=%v err=%v", found, err)
+	}
+}
+
+func TestGitHubDefaultBranch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/repos/o/r" {
+			_, _ = w.Write([]byte(`{"default_branch":"main"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := NewGitHub("token")
+	c.BaseURL = srv.URL
+	branch, err := c.DefaultBranch(context.Background(), "o", "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if branch != "main" {
+		t.Fatalf("branch = %q", branch)
 	}
 }

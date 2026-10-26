@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -35,12 +36,13 @@ func NewGitHub(token string) *GitHub {
 
 // PullRequest is the subset of PR metadata the engine uses.
 type PullRequest struct {
-	Number  int    `json:"number"`
-	Title   string `json:"title"`
-	Body    string `json:"body"`
-	State   string `json:"state"`
-	HTMLURL string `json:"html_url"`
-	Base    struct {
+	Number         int    `json:"number"`
+	Title          string `json:"title"`
+	Body           string `json:"body"`
+	State          string `json:"state"`
+	HTMLURL        string `json:"html_url"`
+	MergeCommitSHA string `json:"merge_commit_sha"`
+	Base           struct {
 		Ref string `json:"ref"`
 		SHA string `json:"sha"`
 	} `json:"base"`
@@ -58,6 +60,83 @@ func (c *GitHub) PR(ctx context.Context, owner, repo string, number int) (PullRe
 		return PullRequest{}, err
 	}
 	return pr, nil
+}
+
+// PullRequestFile is one changed file reported by the pull request files API.
+type PullRequestFile struct {
+	Filename string `json:"filename"`
+	Status   string `json:"status"`
+}
+
+// PullRequestFiles lists every changed file for a pull request. It follows
+// pagination up to the bundle's file ceiling so a large pull request cannot
+// make the verifier loop forever.
+func (c *GitHub) PullRequestFiles(ctx context.Context, owner, repo string, number int) ([]PullRequestFile, error) {
+	const perPage = 100
+	const maxPages = 20
+	var all []PullRequestFile
+	for page := 1; page <= maxPages; page++ {
+		var files []PullRequestFile
+		path := fmt.Sprintf("/repos/%s/%s/pulls/%d/files?per_page=%d&page=%d", owner, repo, number, perPage, page)
+		if err := c.do(ctx, http.MethodGet, path, nil, &files); err != nil {
+			return nil, err
+		}
+		all = append(all, files...)
+		if len(files) < perPage {
+			return all, nil
+		}
+	}
+	return nil, fmt.Errorf("github: pull request #%d has more than %d changed files", number, perPage*maxPages)
+}
+
+// DefaultBranch returns the repository's default branch.
+func (c *GitHub) DefaultBranch(ctx context.Context, owner, repo string) (string, error) {
+	var info struct {
+		DefaultBranch string `json:"default_branch"`
+	}
+	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/%s", owner, repo), nil, &info); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(info.DefaultBranch) == "" {
+		return "", fmt.Errorf("github: repository %s/%s has no default branch", owner, repo)
+	}
+	return info.DefaultBranch, nil
+}
+
+// FileAtRef returns a repository file at a specific revision. The second return
+// value is false when the path does not exist at that revision.
+func (c *GitHub) FileAtRef(ctx context.Context, owner, repo, file, ref string) ([]byte, bool, error) {
+	segments := strings.Split(strings.TrimPrefix(strings.TrimSpace(file), "/"), "/")
+	for i := range segments {
+		segments[i] = url.PathEscape(segments[i])
+	}
+	path := fmt.Sprintf("/repos/%s/%s/contents/%s?ref=%s", owner, repo, strings.Join(segments, "/"), url.QueryEscape(ref))
+	status, body, err := c.raw(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, false, err
+	}
+	switch status {
+	case http.StatusNotFound:
+		return nil, false, nil
+	case http.StatusOK:
+	default:
+		return nil, false, fmt.Errorf("github: GET %s: status %d: %s", path, status, truncate(string(body), 300))
+	}
+	var out struct {
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, false, fmt.Errorf("github: decode file %s: %w", file, err)
+	}
+	if out.Encoding != "" && out.Encoding != "base64" {
+		return nil, false, fmt.Errorf("github: unsupported encoding %q for %s", out.Encoding, file)
+	}
+	data, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(out.Content, "\n", ""))
+	if err != nil {
+		return nil, false, fmt.Errorf("github: decode file %s: %w", file, err)
+	}
+	return data, true, nil
 }
 
 // Issue is the subset of issue metadata the engine uses.

@@ -1,12 +1,20 @@
 package main
 
 import (
+	"context"
+	"encoding/base64"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/greadee/review-engine/internal/bundle"
 	"github.com/greadee/review-engine/internal/config"
 	"github.com/greadee/review-engine/internal/provider"
+	"github.com/greadee/review-engine/internal/vcs"
 )
 
 // TestPRConfigCannotRedirectProviderKey is the regression test for the
@@ -81,5 +89,112 @@ func TestGlobalConfigCanAllowlist(t *testing.T) {
 	cfg.Provider.BaseURL = "https://internal.example/v1"
 	if _, err := buildProvider(cfg, false); err != nil {
 		t.Fatalf("global-config allowlist should permit the endpoint: %v", err)
+	}
+}
+
+func gitTest(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	full := append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@e"}, args...)
+	out, err := exec.Command("git", full...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func TestLoadTrustedConfigUsesBaseRevision(t *testing.T) {
+	t.Setenv("REVIEW_GLOBAL_CONFIG", filepath.Join(t.TempDir(), "absent.yaml"))
+	dir := t.TempDir()
+	gitTest(t, dir, "init", "-q")
+	if err := os.WriteFile(filepath.Join(dir, "revu.yaml"), []byte("ignore:\n  - docs/**\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, dir, "add", "revu.yaml")
+	gitTest(t, dir, "commit", "-q", "-m", "base")
+	base := gitTest(t, dir, "rev-parse", "HEAD")
+
+	if err := os.WriteFile(filepath.Join(dir, "revu.yaml"), []byte("ignore:\n  - '**/*'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, dir, "add", "revu.yaml")
+	gitTest(t, dir, "commit", "-q", "-m", "head")
+
+	repo, err := vcs.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadTrustedConfig(repo, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Ignore) != 1 || cfg.Ignore[0] != "docs/**" {
+		t.Fatalf("trusted config should come from base, got %v", cfg.Ignore)
+	}
+	_headCfg, err := loadTrustedConfig(repo, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(_headCfg.Ignore) != 1 || _headCfg.Ignore[0] != "**/*" {
+		t.Fatalf("HEAD config should be the later file, got %v", _headCfg.Ignore)
+	}
+}
+
+func TestGitHubScopeAppliesTrustedIgnore(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls/7/files" {
+			_, _ = w.Write([]byte(`[{"filename":"a.go","status":"modified"},{"filename":"docs/x.md","status":"added"}]`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	gh := vcs.NewGitHub("token")
+	gh.BaseURL = srv.URL
+	b := bundle.Bundle{Profile: "pr", PR: 7}
+	got, err := githubScope(context.Background(), gh, "o", "r", b, []string{"docs/**"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "a.go" {
+		t.Fatalf("expected only a.go, got %v", got)
+	}
+	if _, err := githubScope(context.Background(), gh, "o", "r", b, []string{"**/*"}); err == nil {
+		t.Fatal("expected an empty trusted scope to be rejected")
+	}
+}
+
+func TestTrustedBaseConfigUsesPRBaseRevision(t *testing.T) {
+	content := base64.StdEncoding.EncodeToString([]byte("ignore:\n  - docs/**\n"))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls/7":
+			_, _ = w.Write([]byte(`{"head":{"sha":"headsha"},"merge_commit_sha":"mergesha","base":{"sha":"basesha"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/contents/revu.yaml":
+			if r.URL.Query().Get("ref") != "basesha" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_, _ = w.Write([]byte(`{"content":"` + content + `","encoding":"base64"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	gh := vcs.NewGitHub("token")
+	gh.BaseURL = srv.URL
+	b := bundle.Bundle{Profile: "pr", PR: 7, Head: "headsha"}
+	cfg, err := trustedBaseConfig(context.Background(), gh, "o", "r", b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Ignore) != 1 || cfg.Ignore[0] != "docs/**" {
+		t.Fatalf("unexpected trusted config: %v", cfg.Ignore)
+	}
+
+	b.Head = "other"
+	if _, err := trustedBaseConfig(context.Background(), gh, "o", "r", b); err == nil {
+		t.Fatal("expected head mismatch to be rejected")
 	}
 }
