@@ -3,6 +3,33 @@
 All notable changes to this project are recorded here. Release titles use the
 animal-rank nickname; the release purpose is the theme of the release notes.
 
+## [1.2.0] - 2026-10-26
+
+**Common Chimpanzee** — Restore.
+
+The release note is `docs/releases/1.2.0.md`.
+
+#### Added
+
+- Trusted base-revision review policy for collect and `run`.
+- Finalize-side PR scope verification through the GitHub API.
+- Archive branch guard for the default branch and PR head branch.
+- Bounded provider retries and correct token-usage accounting.
+- CLI version derivation and `--static`/`--semantic` overrides.
+
+#### Changed
+
+- One stable summary comment per PR, updated in place without `GET /user`.
+- `revu config` redacts credentials.
+- Collect no longer accepts PR-controlled policy for scope or analysis.
+
+#### Fixed
+
+- Empty trusted scope is rejected instead of producing an approval.
+- Bundles that omit changed files are rejected during finalize.
+- Provider 408/429/5xx and transient failures are retried with a bounded wait.
+- GitHub token redaction, comment idempotency, and path pinning are covered by tests.
+
 ## [1.1.1] - 2026-10-20
 
 **Common Rat** — post-v1 hardening patch.

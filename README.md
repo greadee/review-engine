@@ -65,7 +65,9 @@ provider key or a write-capable token. CI verifies that every documented
 reference resolves and is pinned, and that the `v1` tag exists.
 
 See [`CHANGELOG.md`](CHANGELOG.md) for release history and the purpose of each
-release.
+release. The animal-rank scheme and release-title rule are in
+[`docs/versioning.md`](docs/versioning.md); the release checklist is in
+[`docs/release-process.md`](docs/release-process.md).
 
 ## Issue review
 

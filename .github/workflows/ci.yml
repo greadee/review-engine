@@ -40,5 +40,10 @@ jobs:
           go build -o revu ./cmd/revu
           ./revu eval --corpus testdata/corpus --check
 
-      - name: Verify published action tags
-        run: git ls-remote --tags origin refs/tags/v1 | grep -q "refs/tags/v1$"
+      - name: Verify release tags
+        run: bash scripts/check-release-tags.sh
+
+      - name: Lint workflows
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          "$(go env GOPATH)/bin/actionlint"

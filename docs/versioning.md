@@ -20,6 +20,27 @@ Rat, rank #31 = Baiji). The rank number is the version's minor number.
 So the sequence is `1.0` (plan) → `1.1` Common Rat → `1.2` Common Chimpanzee →
 … → `1.31` Baiji → `2.0` (plan) → `2.1` Common Rat → …
 
+## Release titles and purpose
+
+The animal name is the release nickname. The release purpose is a separate theme
+that appears in the release note.
+
+- The tag and GitHub release title use the animal nickname:
+  `v1.2.0 Common Chimpanzee`.
+- The release note opens with the purpose: “This is the **Restore** release.”
+- Do not use the purpose as the animal nickname, and do not title a release
+  `v1.2.0 Restore`.
+
+The same rule applies to patches: the tag and title carry the animal, while the
+release note explains what the patch is for.
+
+| Release | Animal nickname | Release purpose |
+|---|---|---|
+| `v1.2.0` | Common Chimpanzee | Restore |
+| `v1.3.0` | Narwhal | Correctness & Security |
+| `v1.4.0` | Harpy Eagle | Polish |
+| `v1.5.0` | Polar Bear | Stability |
+
 ## Ranks
 
 | Minor | Pseudoname |
@@ -61,8 +82,10 @@ the correct spellings.
 
 ## Milestones and tags
 
-- A milestone is named `"<version> <Pseudoname> - <title>"`, e.g.
-  `1.1 Common Rat - safe, deterministic pr review`.
+- A release milestone is named `"<version> <Pseudoname>"`; its description says
+  `Release purpose: <theme>`. For example, `1.2 Common Chimpanzee` has the
+  description “Release purpose: Restore”.
+- Release titles follow the same convention: `v1.2.0 Common Chimpanzee`.
 - The unnamed planning phase uses `"<major>.0 - planning"`.
 - Released tags follow `v<MAJOR>.<MINOR>.<PATCH>`, with a maintained major tag
   (`v1`) tracking the latest stable `1.x` release.
@@ -71,6 +94,9 @@ the correct spellings.
 
 - **1.0.x** (planning, unnamed) — the v1 build-out (Stages 0–6) and early
   hardening. Released: `v1.0.0`, `v1.0.1`.
-- **1.1 Common Rat** — current line; the post-v1 hardening work (PR #17,
-  `1.1.x`) is released as `v1.1.1`. The release purpose is recorded in the
-  `CHANGELOG.md` entry and the GitHub release notes.
+- **1.1 Common Rat** — post-v1 hardening. Released: `v1.1.1`.
+- **1.2 Common Chimpanzee** — current development line. Release purpose:
+  Restore. Planned release: `v1.2.0`.
+- **1.3 Narwhal** — planned. Release purpose: Correctness & Security.
+- **1.4 Harpy Eagle** — planned. Release purpose: Polish.
+- **1.5 Polar Bear** — planned. Release purpose: Stability.
