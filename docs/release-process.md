@@ -65,3 +65,11 @@ If the release is wrong:
 4. Add a correction note to the release and affected issues.
 
 Never move `v1` before the release page and tag target have been verified.
+
+## Branch protection and release-manager bypass
+
+`main` is protected: changes arrive by pull request and the `go` CI check must
+pass. The repository administrator bypass is reserved for release preparation
+when the release automation cannot complete through a pull request. Record the
+reason in the release notes or the release issue; do not use the bypass for
+normal feature or documentation changes.

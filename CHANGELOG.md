@@ -16,6 +16,8 @@ The release note is `docs/releases/1.2.0.md`.
 - Archive branch guard for the default branch and PR head branch.
 - Bounded provider retries and correct token-usage accounting.
 - CLI version derivation and `--static`/`--semantic` overrides.
+- Protected `main`, CODEOWNERS, `SECURITY.md`, and SHA-pinned third-party actions.
+- Generic committed configuration with no localhost provider endpoint.
 
 #### Changed
 

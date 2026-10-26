@@ -262,3 +262,43 @@ func TestShowConfigRedactsGitHubToken(t *testing.T) {
 		t.Fatalf("revu config leaked the token:\n%s", data)
 	}
 }
+
+func TestCommittedConfigsAreGeneric(t *testing.T) {
+	root := filepath.Join("..", "..")
+	files := []string{
+		filepath.Join(root, "revu.yaml"),
+		filepath.Join(root, "revu.example.yaml"),
+		filepath.Join(root, "action.yml"),
+	}
+	for _, path := range files {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, forbidden := range []string{"host.docker.internal", "127.0.0.1", "localhost"} {
+			if strings.Contains(strings.ToLower(string(data)), forbidden) {
+				t.Fatalf("%s contains local endpoint %q", path, forbidden)
+			}
+		}
+	}
+}
+
+func TestCommittedAndStarterConfigsLoad(t *testing.T) {
+	t.Setenv("REVIEW_GLOBAL_CONFIG", filepath.Join(t.TempDir(), "absent.yaml"))
+	root := filepath.Join("..", "..")
+	for _, path := range []string{
+		filepath.Join(root, "revu.yaml"),
+		filepath.Join(root, "revu.example.yaml"),
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := config.LoadData(data); err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+	}
+	if _, err := config.LoadData([]byte(starterConfig)); err != nil {
+		t.Fatalf("starter config: %v", err)
+	}
+}

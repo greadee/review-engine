@@ -119,3 +119,39 @@ func tagNames() []string {
 	}
 	return out
 }
+
+var thirdPartyAction = regexp.MustCompile(`uses:\s*(actions/[A-Za-z0-9_.-]+)@([^\s#]+)`)
+
+func TestThirdPartyActionsPinned(t *testing.T) {
+	root := repoRoot(t)
+	paths := []string{
+		filepath.Join(root, "action.yml"),
+		filepath.Join(root, "README.md"),
+	}
+	for _, dir := range []string{".github", "examples"} {
+		_ = filepath.Walk(filepath.Join(root, dir), func(p string, fi os.FileInfo, err error) error {
+			if err == nil && !fi.IsDir() && (filepath.Ext(p) == ".yml" || filepath.Ext(p) == ".yaml") {
+				paths = append(paths, p)
+			}
+			return nil
+		})
+	}
+	found := 0
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, line := range strings.Split(string(data), "\n") {
+			for _, m := range thirdPartyAction.FindAllStringSubmatch(line, -1) {
+				found++
+				if !fullSHA.MatchString(m[2]) {
+					t.Errorf("%s:%d: %s is not pinned to a full commit SHA", path, i+1, m[1])
+				}
+			}
+		}
+	}
+	if found == 0 {
+		t.Fatal("no third-party action references found (scan likely broken)")
+	}
+}

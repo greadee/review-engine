@@ -29,7 +29,7 @@ jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
       - uses: greadee/review-engine@v1
@@ -372,6 +372,11 @@ acceptance-criteria verification with closure gating, a fork-safe two-phase
 Python, and TypeScript analyzers, multi-repo conveniences (config layering,
 per-profile overrides, CI auto-detection, `config`/`doctor`), and an optional
 SQLite tracking store. See [`sprint-plan.md`](sprint-plan.md).
+
+## Security
+
+Report vulnerabilities privately through the repository's Security tab. See
+[`SECURITY.md`](SECURITY.md).
 
 ## License
 
