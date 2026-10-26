@@ -66,3 +66,15 @@ func TestAPIKeyFromEnv(t *testing.T) {
 		t.Fatalf("got %q", p.APIKey())
 	}
 }
+
+func TestRedactedClearsCredentials(t *testing.T) {
+	cfg := Default()
+	cfg.GitHubToken = "secret-token"
+	redacted := cfg.Redacted()
+	if redacted.GitHubToken != "" {
+		t.Fatalf("github token was not redacted: %q", redacted.GitHubToken)
+	}
+	if cfg.GitHubToken != "secret-token" {
+		t.Fatal("Redacted mutated the original config")
+	}
+}

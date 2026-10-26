@@ -32,3 +32,25 @@ issues.
   build tooling (`go build`/`go vet`, `ruff`, `tsc`) during collect, which can
   fetch dependencies or a `toolchain` declared in `go.mod`. For untrusted pull
   requests use the two-phase flow so this runs in the secret-free job.
+
+- **Trusted collect policy.** `collect` reads `revu.yaml` from the base revision,
+  not the pull-request checkout. A PR cannot change ignore rules, static/semantic
+  toggles, or review limits. Consumers that relied on PR-local policy must move
+  it to the base branch or a trusted global/workflow configuration.
+
+- **PR scope verification.** PR and impact finalization requires the GitHub API,
+  `--repository`, and `--pr` so it can verify the bundle against the pull
+  request's changed files. A local finalize without those values is rejected;
+  `--dry-run` remains offline.
+
+- **Archive branch guard.** Remote archive writes refuse the repository default
+  branch and the pull request head branch. `archive.branch` must name a dedicated
+  bot branch.
+
+- **Existing duplicate comments.** The 1.2 comment contract updates the first
+  marker comment in place. It does not delete duplicate marker comments created
+  by earlier append-per-run releases; clean those up once manually if needed.
+
+- **CI tracking state.** The provided workflows do not yet restore `.review-state`
+  between jobs, so lifecycle transitions are local-only in practice. Persistent
+  CI state is scheduled for 1.3.

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -196,5 +197,68 @@ func TestTrustedBaseConfigUsesPRBaseRevision(t *testing.T) {
 	b.Head = "other"
 	if _, err := trustedBaseConfig(context.Background(), gh, "o", "r", b); err == nil {
 		t.Fatal("expected head mismatch to be rejected")
+	}
+}
+
+func TestCurrentVersionUsesInjectedVersion(t *testing.T) {
+	old := version
+	version = "1.2.0"
+	defer func() { version = old }()
+	if got := currentVersion(); got != "1.2.0" {
+		t.Fatalf("currentVersion() = %q, want 1.2.0", got)
+	}
+}
+
+func TestRunAcceptsStaticAndSemanticFlags(t *testing.T) {
+	t.Setenv("REVIEW_GLOBAL_CONFIG", filepath.Join(t.TempDir(), "absent.yaml"))
+	dir := t.TempDir()
+	gitTest(t, dir, "init", "-q")
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, dir, "add", "a.go")
+	gitTest(t, dir, "commit", "-q", "-m", "base")
+	base := gitTest(t, dir, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n\nvar X = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, dir, "add", "a.go")
+	gitTest(t, dir, "commit", "-q", "-m", "head")
+	head := gitTest(t, dir, "rev-parse", "HEAD")
+
+	args := []string{
+		"--repo-dir", dir, "--base", base, "--head", head, "--profile", "pr",
+		"--dry-run", "--no-block", "--quiet", "--persist", "never",
+		"--static=false", "--semantic=false",
+	}
+	if err := run(args); err != nil {
+		t.Fatalf("run with documented flags failed: %v", err)
+	}
+	if err := run(append(args[:len(args)-2], "--static=not-bool")); err == nil {
+		t.Fatal("expected invalid --static value to fail")
+	}
+}
+
+func TestShowConfigRedactsGitHubToken(t *testing.T) {
+	t.Setenv("REVIEW_GLOBAL_CONFIG", filepath.Join(t.TempDir(), "absent.yaml"))
+	path := filepath.Join(t.TempDir(), "revu.yaml")
+	if err := os.WriteFile(path, []byte("githubToken: supersecret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	callErr := showConfig([]string{"--config", path})
+	_ = w.Close()
+	os.Stdout = old
+	data, _ := io.ReadAll(r)
+	if callErr != nil {
+		t.Fatal(callErr)
+	}
+	if strings.Contains(string(data), "supersecret") {
+		t.Fatalf("revu config leaked the token:\n%s", data)
 	}
 }

@@ -23,6 +23,9 @@ Grant the least privilege each job needs.
 
 The collect job must never receive `REVIEW_PROVIDER_API_KEY`.
 
+The default `GITHUB_TOKEN` is sufficient for the comment, issue, and archive
+paths. No user-scoped PAT is required, and the action does not call `GET /user`.
+
 ## Recommended: two-phase (fork-safe) integration
 
 This is the recommended setup for any untrusted pull request — a fork or a
@@ -33,14 +36,16 @@ same-repository PR that can edit `revu.yaml`.
 Copy [`examples/fork-safe/collect.yml`](../examples/fork-safe/collect.yml). It
 runs on `pull_request`, has `contents: read` only, checks out the PR, produces a
 bundle, and uploads it as an artifact. The pinned action revision is referenced
-by full commit SHA.
+by full commit SHA. Collect reads its review policy from `revu.yaml` at the base
+revision, not from the pull-request checkout.
 
 ### 2. Finalize (secrets, no checkout)
 
 Copy [`examples/fork-safe/finalize.yml`](../examples/fork-safe/finalize.yml). It
 is triggered by `workflow_run`, downloads the artifact, and runs `phase:
 finalize`. It never checks out the pull request, and it binds the artifact to the
-trusted event:
+trusted event. It also fetches the base `revu.yaml` and the PR changed-file list
+through the GitHub API to verify that the bundle covers the trusted scope:
 
 ```yaml
 expect-repository: ${{ github.event.workflow_run.repository.full_name }}
@@ -70,5 +75,5 @@ and drives the two-phase flow against an in-memory GitHub API. It verifies:
 - a validated blocking finding fails the check, and a fully covered clean PR
   passes;
 - publish produces an immutable commit-SHA permalink;
-- reruns upsert a single comment (no duplicates);
+- reruns update one marker comment in place (no duplicates) without `GET /user`;
 - the workflows keep the secret-bearing job out of untrusted checkout.

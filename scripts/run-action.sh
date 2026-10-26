@@ -117,7 +117,6 @@ fi
 case "$phase" in
   collect)
     args=(collect
-      --config "$config"
       --profile "$profile"
       --base "$base"
       --head "$head"

@@ -348,6 +348,13 @@ func (c *Config) ApplyProfile(profile string) {
 	}
 }
 
+// Redacted returns a copy safe to print: credentials are cleared while all
+// policy and feature configuration is preserved.
+func (c Config) Redacted() Config {
+	c.GitHubToken = ""
+	return c
+}
+
 // Marshal renders the effective configuration as YAML.
 func Marshal(cfg Config) ([]byte, error) {
 	return yaml.Marshal(cfg)

@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -22,6 +24,8 @@ type OpenAI struct {
 	model              string
 	supportsJSONFormat bool
 	http               *http.Client
+	maxAttempts        int
+	sleep              func(context.Context, time.Duration) error
 }
 
 // NewOpenAI builds an OpenAI-compatible provider. An empty BaseURL or Model
@@ -48,6 +52,8 @@ func NewOpenAI(cfg Config) *OpenAI {
 		model:              cfg.Model,
 		supportsJSONFormat: supportsJSON,
 		http:               &http.Client{Timeout: timeout},
+		maxAttempts:        4,
+		sleep:              sleepContext,
 	}
 }
 
@@ -118,47 +124,131 @@ func (o *OpenAI) Complete(ctx context.Context, req Request) (Response, error) {
 	if err != nil {
 		return Response{}, fmt.Errorf("provider: encode request: %w", err)
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/chat/completions", bytes.NewReader(payload))
-	if err != nil {
-		return Response{}, fmt.Errorf("provider: build request: %w", err)
+	attempts := o.maxAttempts
+	if attempts < 1 {
+		attempts = 1
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if o.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+o.apiKey)
+	sleep := o.sleep
+	if sleep == nil {
+		sleep = sleepContext
 	}
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/chat/completions", bytes.NewReader(payload))
+		if err != nil {
+			return Response{}, fmt.Errorf("provider: build request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		if o.apiKey != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+o.apiKey)
+		}
 
-	resp, err := o.http.Do(httpReq)
-	if err != nil {
-		return Response{}, fmt.Errorf("provider: request failed: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, err := o.http.Do(httpReq)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+				return Response{}, fmt.Errorf("provider: request failed: %w", err)
+			}
+			lastErr = fmt.Errorf("request failed: %w", err)
+			if attempt == attempts-1 {
+				break
+			}
+			if err := sleep(ctx, retryDelay(attempt, 0)); err != nil {
+				return Response{}, fmt.Errorf("provider: retry wait: %w", err)
+			}
+			continue
+		}
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil {
-		return Response{}, fmt.Errorf("provider: read response: %w", err)
+		data, readErr := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
+		status := resp.StatusCode
+		_ = resp.Body.Close()
+		if readErr != nil {
+			lastErr = fmt.Errorf("read response: %w", readErr)
+			if attempt == attempts-1 {
+				break
+			}
+			if err := sleep(ctx, retryDelay(attempt, 0)); err != nil {
+				return Response{}, fmt.Errorf("provider: retry wait: %w", err)
+			}
+			continue
+		}
+
+		if status < 200 || status >= 300 {
+			lastErr = fmt.Errorf("status %d: %s", status, truncate(string(data), 512))
+			if !retryableStatus(status) {
+				return Response{}, fmt.Errorf("provider: %w", lastErr)
+			}
+			if attempt == attempts-1 {
+				break
+			}
+			if err := sleep(ctx, retryDelay(attempt, retryAfter)); err != nil {
+				return Response{}, fmt.Errorf("provider: retry wait: %w", err)
+			}
+			continue
+		}
+
+		var parsed chatResponse
+		if err := json.Unmarshal(data, &parsed); err != nil {
+			return Response{}, fmt.Errorf("provider: decode response: %w", err)
+		}
+		if parsed.Error != nil {
+			return Response{}, fmt.Errorf("provider: %s: %s", parsed.Error.Type, parsed.Error.Message)
+		}
+		if len(parsed.Choices) == 0 {
+			return Response{}, fmt.Errorf("provider: empty choices")
+		}
+		text := parsed.Choices[0].Message.Content
+		if text == "" && parsed.Choices[0].Message.ReasoningContent != "" {
+			text = parsed.Choices[0].Message.ReasoningContent
+		}
+		return Response{
+			Text:  text,
+			Usage: parsed.Usage,
+			Model: parsed.Model,
+		}, nil
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return Response{}, fmt.Errorf("provider: status %d: %s", resp.StatusCode, truncate(string(data), 512))
+	if lastErr == nil {
+		lastErr = errors.New("request failed")
 	}
-	var parsed chatResponse
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		return Response{}, fmt.Errorf("provider: decode response: %w", err)
+	return Response{}, fmt.Errorf("provider: request failed after %d attempt(s): %w", attempts, lastErr)
+}
+
+func retryableStatus(status int) bool {
+	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= 500
+}
+
+func parseRetryAfter(value string) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
 	}
-	if parsed.Error != nil {
-		return Response{}, fmt.Errorf("provider: %s: %s", parsed.Error.Type, parsed.Error.Message)
+	seconds, err := strconv.Atoi(value)
+	if err != nil || seconds < 0 {
+		return 0
 	}
-	if len(parsed.Choices) == 0 {
-		return Response{}, fmt.Errorf("provider: empty choices")
+	return time.Duration(seconds) * time.Second
+}
+
+func retryDelay(attempt int, retryAfter time.Duration) time.Duration {
+	if retryAfter > 0 {
+		return retryAfter
 	}
-	text := parsed.Choices[0].Message.Content
-	if text == "" && parsed.Choices[0].Message.ReasoningContent != "" {
-		text = parsed.Choices[0].Message.ReasoningContent
+	delay := 250 * time.Millisecond << attempt
+	if delay > 5*time.Second {
+		delay = 5 * time.Second
 	}
-	return Response{
-		Text:  text,
-		Usage: parsed.Usage,
-		Model: parsed.Model,
-	}, nil
+	return delay
+}
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func truncate(s string, n int) string {

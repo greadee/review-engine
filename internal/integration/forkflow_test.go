@@ -133,15 +133,18 @@ func TestForkSafeFlow(t *testing.T) {
 		t.Fatalf("expected JSON+MD archived, got %d files", len(gh.files()))
 	}
 
-	marker := "<!-- revu:run=" + res.Run.ID + " -->"
-	if err := client.UpsertComment(ctx, "o", "r", 42, marker, "summary"); err != nil {
+	marker := "<!-- revu:pr=42 -->"
+	if err := client.UpsertComment(ctx, "o", "r", 42, marker, "first summary"); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.UpsertComment(ctx, "o", "r", 42, marker, "summary"); err != nil {
+	if err := client.UpsertComment(ctx, "o", "r", 42, marker, "second summary"); err != nil {
 		t.Fatal(err)
 	}
-	if n := gh.commentCount(); n != 2 {
-		t.Fatalf("reruns must post independent comments, not upsert: got %d comments", n)
+	if n := gh.commentCount(); n != 1 {
+		t.Fatalf("reruns must update one comment, not append: got %d comments", n)
+	}
+	if got := gh.commentBody(0); !strings.Contains(got, "second summary") {
+		t.Fatalf("comment was not updated in place: %q", got)
 	}
 
 	// A blocking finding fails the check.

@@ -184,12 +184,35 @@ func (c *GitHub) AuthenticatedLogin(ctx context.Context) (string, error) {
 	return u.Login, nil
 }
 
-// UpsertComment posts a new comment on an issue or pull request. Each call
-// produces an independent comment so that a series of review runs on the same
-// PR preserves the full history of findings over time. No prior comments are
-// looked up or updated.
+type issueComment struct {
+	ID   int64  `json:"id"`
+	Body string `json:"body"`
+}
+
+// UpsertComment updates the existing comment carrying marker, or posts a new
+// one when no marker comment exists. It deliberately does not call GET /user,
+// so the default GitHub token is sufficient and no user-scoped PAT is needed.
 func (c *GitHub) UpsertComment(ctx context.Context, owner, repo string, number int, marker, body string) error {
 	want := marker + "\n\n" + body
+	if marker != "" {
+		const perPage = 100
+		const maxPages = 10
+		for page := 1; page <= maxPages; page++ {
+			var comments []issueComment
+			path := fmt.Sprintf("/repos/%s/%s/issues/%d/comments?per_page=%d&page=%d", owner, repo, number, perPage, page)
+			if err := c.do(ctx, http.MethodGet, path, nil, &comments); err != nil {
+				return err
+			}
+			for _, cm := range comments {
+				if strings.Contains(cm.Body, marker) {
+					return c.do(ctx, http.MethodPatch, fmt.Sprintf("/repos/%s/%s/issues/comments/%d", owner, repo, cm.ID), map[string]string{"body": want}, nil)
+				}
+			}
+			if len(comments) < perPage {
+				break
+			}
+		}
+	}
 	return c.Comment(ctx, owner, repo, number, want)
 }
 

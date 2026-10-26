@@ -142,12 +142,21 @@ A review runs in two phases so untrusted code never shares a job with the API ke
 revu collect --profile pr --base origin/main --head HEAD --out bundle.json
 
 # Phase 2 — secrets, never checks out the PR
-revu finalize --bundle bundle.json --comment --publish
+revu finalize --bundle bundle.json --repository owner/name --pr 42 --comment --publish
 ```
 
 `revu run` is simply collect + finalize in one process. The reusable workflow
 [`.github/workflows/review.yml`](.github/workflows/review.yml) runs both jobs;
 for forks, bridge them with `workflow_run` as shown in `examples/fork-safe/`.
+
+The collect phase reads `revu.yaml` from the **base revision**, not from the pull
+request checkout. A PR cannot use its own config to disable static analysis,
+shrink the review scope, or turn an empty scope into an approval. Finalize
+independently verifies the bundle against the PR changed files through the
+GitHub API, so a PR/impact finalize needs `--repository` and `--pr`.
+
+The summary is one stable comment per PR: reruns update the marker comment in
+place. This path uses the default `GITHUB_TOKEN`; no user-scoped PAT is required.
 
 ## Local CLI
 
@@ -169,11 +178,14 @@ go build -o revu ./cmd/revu
 # Inspect the effective configuration and the environment
 ./revu config
 ./revu doctor
+
+# Print the CLI version (release tag, module version, or VCS revision)
+./revu version
 ```
 
 Useful flags: `--dry-run` (fake provider, no GitHub writes), `--static=false`,
-`--provider`, `--model`, `--repository owner/name`, `--pr N`, `--publish`,
-`--comment`, `--state-dir`.
+`--semantic=false`, `--provider`, `--model`, `--repository owner/name`, `--pr N`,
+`--publish`, `--comment`, `--state-dir`. `revu config` redacts credentials.
 
 ## Profiles
 
@@ -197,6 +209,13 @@ the file, which is how the Action passes its inputs.
   (`REVIEW_GLOBAL_CONFIG`, else `<user-config-dir>/revu/config.yaml`), then the
   repository's `revu.yaml`, then environment overrides. One global config can set
   defaults shared by many repositories.
+- **Trusted policy.** `collect` and the collect half of `run` read policy from
+  `revu.yaml` at `--base`. `run` uses that policy for ignore rules, static and
+  semantic toggles, file limits, block threshold, coverage threshold, and rubric;
+  provider, archive, and persistence settings remain caller configuration.
+- **Scope verification.** For `pr` and `impact`, finalize compares the bundle
+  against the GitHub PR files API and rejects a bundle that omits changed files.
+  The base config used for that check is fetched from the PR base SHA.
 - **Per-profile overrides.** A `profiles:` map lets a single file configure every
   review type (rubric, ignore globs, block threshold, static/semantic, limits).
 - **CI auto-detection.** Base, head, repository, and PR number are inferred from
@@ -266,6 +285,10 @@ Tracking is on by default and uses the JSON store at `--state-dir`
 the opt-in SQLite backend, which is pure-Go (no cgo) and stores at
 `<state-dir>/review.db` by default. Both backends implement the same interface and
 hold identical findings. See [`docs/adr/0006-optional-sqlite-store.md`](docs/adr/0006-optional-sqlite-store.md).
+
+In CI, `.review-state` is not persisted by the provided workflows yet, so
+lifecycle state is per-job. Persistent CI state and per-PR lifecycle scoping are
+scheduled for 1.3.
 
 ## Detectors
 

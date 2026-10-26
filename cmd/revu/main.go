@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -30,7 +31,7 @@ import (
 	"github.com/greadee/review-engine/internal/vcs"
 )
 
-const version = "0.1.0"
+var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -68,7 +69,7 @@ func main() {
 	case "eval":
 		err = evalCorpus(os.Args[2:])
 	case "version":
-		fmt.Println(version)
+		fmt.Println(currentVersion())
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -80,6 +81,41 @@ func main() {
 		fmt.Fprintf(os.Stderr, "revu: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// currentVersion prefers an injected release version, then module metadata, then
+// the VCS revision of a development build.
+func currentVersion() string {
+	if v := strings.TrimSpace(version); v != "" && v != "dev" {
+		return v
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "dev"
+	}
+	if v := strings.TrimSpace(info.Main.Version); v != "" && v != "(devel)" {
+		return v
+	}
+	var revision string
+	var dirty bool
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			revision = setting.Value
+		case "vcs.modified":
+			dirty = setting.Value == "true"
+		}
+	}
+	if revision == "" {
+		return "dev"
+	}
+	if len(revision) > 12 {
+		revision = revision[:12]
+	}
+	if dirty {
+		return "dev+" + revision + ".dirty"
+	}
+	return "dev+" + revision
 }
 
 func usage() {
@@ -331,6 +367,8 @@ func run(args []string) error {
 	risk := fs.String("risk", "", "severity threshold for --persist on-risk (P0..P3)")
 	providerName := fs.String("provider", "", "override provider name")
 	model := fs.String("model", "", "override model id")
+	staticFlag := fs.String("static", "", "override static analysis (true|false)")
+	semanticFlag := fs.String("semantic", "", "override semantic review (true|false)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -395,6 +433,20 @@ func run(args []string) error {
 	cfg.Review.CoverageThreshold = trusted.Review.CoverageThreshold
 	if len(trusted.Review.Rubric) > 0 {
 		cfg.Review.Rubric = trusted.Review.Rubric
+	}
+	if *staticFlag != "" {
+		v, err := strconv.ParseBool(strings.TrimSpace(*staticFlag))
+		if err != nil {
+			return fmt.Errorf("--static: %w", err)
+		}
+		cfg.Review.Static = v
+	}
+	if *semanticFlag != "" {
+		v, err := strconv.ParseBool(strings.TrimSpace(*semanticFlag))
+		if err != nil {
+			return fmt.Errorf("--semantic: %w", err)
+		}
+		cfg.Review.Semantic = v
 	}
 
 	prov, err := buildProvider(cfg, *dryRun)
@@ -839,7 +891,7 @@ func issueReview(args []string) error {
 	verdict := issues.EvaluateWithOptions(issue, reader, issues.Options{Approved: approved})
 	closed := strings.EqualFold(issue.State, "closed")
 	if *comment {
-		marker := fmt.Sprintf("<!-- revu:run=%s -->", res.Run.ID)
+		marker := fmt.Sprintf("<!-- revu:issue=%d -->", *issueNum)
 		if err := gh.UpsertComment(ctx, owner, name, *issueNum, marker, report.SummaryMarkdown(res.Run)); err != nil {
 			return err
 		}
@@ -1267,7 +1319,7 @@ func showConfig(args []string) error {
 	if c.profile != "" {
 		cfg.ApplyProfile(c.profile)
 	}
-	data, err := config.Marshal(cfg)
+	data, err := config.Marshal(cfg.Redacted())
 	if err != nil {
 		return err
 	}

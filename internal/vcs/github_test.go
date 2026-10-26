@@ -68,15 +68,17 @@ func TestPutFileRetriesOnConflict(t *testing.T) {
 	}
 }
 
-// TestUpsertCommentPostsNewComment proves that UpsertComment always posts a new
-// comment without looking up or updating existing ones. Each invocation produces
-// an independent comment so that repeated review runs on the same PR preserve
-// the full history of findings over time.
+// TestUpsertCommentPostsNewComment verifies that a PR without a marker
+// comment gets one summary comment.
 func TestUpsertCommentPostsNewComment(t *testing.T) {
 	var posted bool
 	var postedBody string
+	var listed bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/1/comments":
+			listed = true
+			_, _ = w.Write([]byte(`[]`))
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues/1/comments":
 			body, _ := io.ReadAll(r.Body)
 			var payload map[string]string
@@ -92,32 +94,42 @@ func TestUpsertCommentPostsNewComment(t *testing.T) {
 
 	c := NewGitHub("token")
 	c.BaseURL = srv.URL
-	if err := c.UpsertComment(context.Background(), "o", "r", 1, "<!-- revu:run=x -->", "new"); err != nil {
+	if err := c.UpsertComment(context.Background(), "o", "r", 1, "<!-- revu:pr=1 -->", "new"); err != nil {
 		t.Fatal(err)
 	}
-	if !posted {
-		t.Fatal("expected a new comment to be posted")
+	if !listed || !posted {
+		t.Fatalf("expected list then post, listed=%v posted=%v", listed, posted)
 	}
-	want := "<!-- revu:run=x -->\n\nnew"
+	want := "<!-- revu:pr=1 -->\n\nnew"
 	if postedBody != want {
 		t.Fatalf("unexpected body: %q", postedBody)
 	}
 }
 
-// TestUpsertCommentMultipleRunsAccumulate proves that repeated calls on the
-// same PR produce multiple independent comments, preserving the history of
-// each review run.
-func TestUpsertCommentMultipleRunsAccumulate(t *testing.T) {
-	var postedCount int
-	var postedBodies []string
+// TestUpsertCommentUpdatesExistingComment verifies the stable-comment contract:
+// a rerun updates the marker comment in place and does not post a duplicate,
+// without calling GET /user.
+func TestUpsertCommentUpdatesExistingComment(t *testing.T) {
+	var listed, patched, posted bool
+	var patchedBody string
+	var userLookedUp bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues/42/comments":
-			postedCount++
+		case r.Method == http.MethodGet && r.URL.Path == "/user":
+			userLookedUp = true
+			w.WriteHeader(http.StatusForbidden)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/42/comments":
+			listed = true
+			_, _ = w.Write([]byte(`[{"id":9,"body":"<!-- revu:pr=42 -->\n\nfirst run"}]`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/repos/o/r/issues/comments/9":
+			patched = true
 			body, _ := io.ReadAll(r.Body)
 			var payload map[string]string
 			_ = json.Unmarshal(body, &payload)
-			postedBodies = append(postedBodies, payload["body"])
+			patchedBody = payload["body"]
+			_, _ = w.Write([]byte(`{"id":9}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues/42/comments":
+			posted = true
 			_, _ = w.Write([]byte(`{}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -127,33 +139,18 @@ func TestUpsertCommentMultipleRunsAccumulate(t *testing.T) {
 
 	c := NewGitHub("token")
 	c.BaseURL = srv.URL
-	ctx := context.Background()
-
-	// First run: posts a comment.
-	if err := c.UpsertComment(ctx, "o", "r", 42, "<!-- revu:pr=42 -->", "first run"); err != nil {
+	if err := c.UpsertComment(context.Background(), "o", "r", 42, "<!-- revu:pr=42 -->", "second run"); err != nil {
 		t.Fatal(err)
 	}
-	if postedCount != 1 {
-		t.Fatalf("expected 1 comment after first run, got %d", postedCount)
+	if !listed || !patched || posted {
+		t.Fatalf("expected list and patch, not post: listed=%v patched=%v posted=%v", listed, patched, posted)
 	}
-
-	// Second run with a different body but the same PR: posts another comment.
-	if err := c.UpsertComment(ctx, "o", "r", 42, "<!-- revu:pr=42 -->", "second run"); err != nil {
-		t.Fatal(err)
+	if userLookedUp {
+		t.Fatal("UpsertComment must not call GET /user")
 	}
-	if postedCount != 2 {
-		t.Fatalf("expected 2 comments after second run, got %d", postedCount)
-	}
-	if len(postedBodies) != 2 {
-		t.Fatalf("expected 2 bodies, got %d", len(postedBodies))
-	}
-	firstWant := "<!-- revu:pr=42 -->\n\nfirst run"
-	secondWant := "<!-- revu:pr=42 -->\n\nsecond run"
-	if postedBodies[0] != firstWant {
-		t.Fatalf("first body: got %q, want %q", postedBodies[0], firstWant)
-	}
-	if postedBodies[1] != secondWant {
-		t.Fatalf("second body: got %q, want %q", postedBodies[1], secondWant)
+	want := "<!-- revu:pr=42 -->\n\nsecond run"
+	if patchedBody != want {
+		t.Fatalf("patched body = %q, want %q", patchedBody, want)
 	}
 }
 
