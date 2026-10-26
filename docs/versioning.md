@@ -71,5 +71,6 @@ the correct spellings.
 
 - **1.0.x** (planning, unnamed) — the v1 build-out (Stages 0–6) and early
   hardening. Released: `v1.0.0`, `v1.0.1`.
-- **1.1 Common Rat** — next; the post-v1 hardening sprint (PR #17, `1.1.x`)
-  opens this line.
+- **1.1 Common Rat** — current line; the post-v1 hardening work (PR #17,
+  `1.1.x`) is released as `v1.1.1`. The release purpose is recorded in the
+  `CHANGELOG.md` entry and the GitHub release notes.

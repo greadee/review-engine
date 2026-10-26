@@ -62,7 +62,10 @@ commit SHA instead:
 The examples and the reusable workflow are pinned to full commit SHAs. `@main`
 (the moving branch) must not be used for the action in a job that holds a
 provider key or a write-capable token. CI verifies that every documented
-reference resolves and is pinned, and that the `v1` tag is published.
+reference resolves and is pinned, and that the `v1` tag exists.
+
+See [`CHANGELOG.md`](CHANGELOG.md) for release history and the purpose of each
+release.
 
 ## Issue review
 
