@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: greadee/review-engine@dad2d3b48d46194a65c3358246aa381104a9964b
+      - uses: greadee/review-engine@30e90d550f0fab6e0c3e05a95e4a98b08838af31
         with:
           profile: pr
           model: gpt-4o-mini
