@@ -49,6 +49,15 @@ if ! $dry_run; then
 fi
 git rev-parse -q --verify "refs/tags/$version" >/dev/null && fail "tag already exists: $version"
 
+release_name="${RELEASE_GIT_NAME:-$(git config user.name 2>/dev/null || true)}"
+release_email="${RELEASE_GIT_EMAIL:-$(git config user.email 2>/dev/null || true)}"
+[ -n "$release_name" ] || fail "set RELEASE_GIT_NAME or git user.name"
+[ -n "$release_email" ] || fail "set RELEASE_GIT_EMAIL or git user.email"
+export GIT_AUTHOR_NAME="$release_name"
+export GIT_AUTHOR_EMAIL="$release_email"
+export GIT_COMMITTER_NAME="$release_name"
+export GIT_COMMITTER_EMAIL="$release_email"
+
 if ! $skip_tests; then
   run go test ./...
 fi

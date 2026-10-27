@@ -28,7 +28,9 @@ Do not use the purpose as the animal nickname. See
    known issues, upgrade notes, and verification evidence.
 3. Confirm the purpose is in the release note and the animal nickname is in the
    title.
-4. Run the dry run:
+4. Set `RELEASE_GIT_NAME` and `RELEASE_GIT_EMAIL` if the environment has no Git
+   identity; the release workflow supplies the Actions bot identity.
+5. Run the dry run:
    ```bash
    bash scripts/release.sh \
      --version vX.Y.Z \
@@ -36,7 +38,7 @@ Do not use the purpose as the animal nickname. See
      --notes docs/releases/X.Y.Z.md \
      --dry-run
    ```
-5. Run the release:
+6. Run the release:
    ```bash
    bash scripts/release.sh \
      --version vX.Y.Z \
@@ -45,14 +47,14 @@ Do not use the purpose as the animal nickname. See
    ```
    The script runs the tests, creates and pushes the annotated tag, publishes the
    GitHub release, moves `v1`, and pushes the moved tag.
-6. Verify:
+7. Verify:
    ```bash
    bash scripts/check-release-tags.sh
    gh release view vX.Y.Z
    gh release list
    ```
-7. Pin examples and the reusable workflow to the released SHA in a follow-up PR.
-8. Close the release milestone and update the current position in
+8. Pin examples and the reusable workflow to the released SHA in a follow-up PR.
+9. Close the release milestone and update the current position in
    `docs/versioning.md`.
 
 ## Rollback
