@@ -95,8 +95,7 @@ the correct spellings.
 - **1.0.x** (planning, unnamed) — the v1 build-out (Stages 0–6) and early
   hardening. Released: `v1.0.0`, `v1.0.1`.
 - **1.1 Common Rat** — post-v1 hardening. Released: `v1.1.1`.
-- **1.2 Common Chimpanzee** — current development line. Release purpose:
-  Restore. Planned release: `v1.2.0`.
+- **1.2 Common Chimpanzee** — released as `v1.2.0`. Release purpose: Restore.
 - **1.3 Narwhal** — planned. Release purpose: Correctness & Security.
 - **1.4 Harpy Eagle** — planned. Release purpose: Polish.
 - **1.5 Polar Bear** — planned. Release purpose: Stability.

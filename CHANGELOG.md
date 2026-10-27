@@ -3,7 +3,7 @@
 All notable changes to this project are recorded here. Release titles use the
 animal-rank nickname; the release purpose is the theme of the release notes.
 
-## [1.2.0] - 2026-10-26
+## [1.2.0] - 2026-10-27
 
 **Common Chimpanzee** — Restore.
 
