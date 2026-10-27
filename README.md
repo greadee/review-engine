@@ -288,9 +288,9 @@ the opt-in SQLite backend, which is pure-Go (no cgo) and stores at
 `<state-dir>/review.db` by default. Both backends implement the same interface and
 hold identical findings. See [`docs/adr/0006-optional-sqlite-store.md`](docs/adr/0006-optional-sqlite-store.md).
 
-In CI, `.review-state` is not persisted by the provided workflows yet, so
-lifecycle state is per-job. Persistent CI state and per-PR lifecycle scoping are
-scheduled for 1.3.
+In CI, the example workflows cache `.review-state` per pull request. The CLI
+stores lifecycle state under `.review-state/pr-<number>`, so one PR cannot mark
+another PR's findings resolved. A cold cache starts a fresh lifecycle.
 
 ## Detectors
 

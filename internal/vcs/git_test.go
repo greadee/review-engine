@@ -71,3 +71,44 @@ func superTrim(s string) string {
 	}
 	return s
 }
+
+func TestChangesFromMergeBaseExcludesBaseBranchAdvance(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q", "-b", "main")
+	write(t, filepath.Join(dir, "a.go"), "package a\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "base")
+	base := superTrim(git(t, dir, "rev-parse", "HEAD"))
+
+	git(t, dir, "switch", "-c", "feature")
+	write(t, filepath.Join(dir, "a.go"), "package a\n\nvar X = 1\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "feature")
+	head := superTrim(git(t, dir, "rev-parse", "HEAD"))
+
+	git(t, dir, "switch", "main")
+	write(t, filepath.Join(dir, "b.go"), "package a\n\nvar Y = 2\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "main advance")
+	baseTip := superTrim(git(t, dir, "rev-parse", "HEAD"))
+
+	r, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prChanges, err := r.ChangesFromMergeBase(baseTip, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prChanges) != 1 || prChanges[0].Path != "a.go" {
+		t.Fatalf("merge-base changes = %+v, want only a.go", prChanges)
+	}
+	twoDot, err := r.Changes(baseTip, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(twoDot) < 2 {
+		t.Fatalf("two-dot diff should include the base advance, got %+v", twoDot)
+	}
+	_ = base
+}

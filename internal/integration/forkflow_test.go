@@ -269,6 +269,9 @@ func TestWorkflowSecurityGuarantees(t *testing.T) {
 	if !bound {
 		t.Error("finalize must bind expect-repository/pr/head/profile to the workflow_run event")
 	}
+	if !hasPRStateCache(finalize.Steps) {
+		t.Error("fork-safe finalize must cache .review-state with a per-PR key")
+	}
 
 	reusable := loadWorkflow(t, ".github/workflows/review.yml")
 	if got := effectivePermissions(reusable, "collect"); got["contents"] != "read" {
@@ -283,4 +286,22 @@ func TestWorkflowSecurityGuarantees(t *testing.T) {
 			t.Error("reusable finalize must never check out the PR")
 		}
 	}
+	if !hasPRStateCache(f.Steps) {
+		t.Error("reusable finalize must cache .review-state with a per-PR key")
+	}
+}
+
+func hasPRStateCache(steps []struct {
+	Uses string            `yaml:"uses"`
+	With map[string]string `yaml:"with"`
+	Env  map[string]string `yaml:"env"`
+}) bool {
+	for _, step := range steps {
+		if strings.HasPrefix(step.Uses, "actions/cache") &&
+			step.With["path"] == ".review-state" &&
+			strings.Contains(step.With["key"], "pr-") {
+			return true
+		}
+	}
+	return false
 }

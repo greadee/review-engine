@@ -51,6 +51,7 @@ issues.
   marker comment in place. It does not delete duplicate marker comments created
   by earlier append-per-run releases; clean those up once manually if needed.
 
-- **CI tracking state.** The provided workflows do not yet restore `.review-state`
-  between jobs, so lifecycle transitions are local-only in practice. Persistent
-  CI state is scheduled for 1.3.
+- **CI tracking cache is best-effort.** The example workflows cache
+  `.review-state` per pull request, scoped under `.review-state/pr-<number>`. A
+  cold or evicted cache starts a fresh lifecycle; it does not corrupt an existing
+  PR's findings.

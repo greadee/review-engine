@@ -302,3 +302,50 @@ func TestCommittedAndStarterConfigsLoad(t *testing.T) {
 		t.Fatalf("starter config: %v", err)
 	}
 }
+
+func TestScopedStateDir(t *testing.T) {
+	if got := scopedStateDir(".review-state", 0); got != ".review-state" {
+		t.Fatalf("no-PR scope = %q", got)
+	}
+	if got := scopedStateDir(".review-state", 42); got != filepath.Join(".review-state", "pr-42") {
+		t.Fatalf("PR scope = %q", got)
+	}
+}
+
+func TestLocalScopeUsesMergeBase(t *testing.T) {
+	dir := t.TempDir()
+	gitTest(t, dir, "init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, dir, "add", "a.go")
+	gitTest(t, dir, "commit", "-q", "-m", "base")
+
+	gitTest(t, dir, "switch", "-c", "feature")
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n\nvar X = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, dir, "add", "a.go")
+	gitTest(t, dir, "commit", "-q", "-m", "feature")
+	head := gitTest(t, dir, "rev-parse", "HEAD")
+
+	gitTest(t, dir, "switch", "main")
+	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("package a\n\nvar Y = 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, dir, "add", "b.go")
+	gitTest(t, dir, "commit", "-q", "-m", "main advance")
+	baseTip := gitTest(t, dir, "rev-parse", "HEAD")
+
+	repo, err := vcs.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := localScope(repo, "pr", baseTip, head, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "a.go" {
+		t.Fatalf("localScope = %v, want only a.go", got)
+	}
+}

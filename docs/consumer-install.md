@@ -45,7 +45,9 @@ Copy [`examples/fork-safe/finalize.yml`](../examples/fork-safe/finalize.yml). It
 is triggered by `workflow_run`, downloads the artifact, and runs `phase:
 finalize`. It never checks out the pull request, and it binds the artifact to the
 trusted event. It also fetches the base `revu.yaml` and the PR changed-file list
-through the GitHub API to verify that the bundle covers the trusted scope:
+through the GitHub API to verify that the bundle covers the trusted scope. The
+example caches `.review-state` under a per-PR key so lifecycle data survives
+across runs:
 
 ```yaml
 expect-repository: ${{ github.event.workflow_run.repository.full_name }}

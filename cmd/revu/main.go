@@ -186,12 +186,21 @@ func loadTrustedConfig(repo *vcs.Repo, base string) (config.Config, error) {
 	return cfg, nil
 }
 
+// changesForProfile uses the merge base for pull-request-style profiles so a
+// moved base branch does not add reverse changes to the review.
+func changesForProfile(repo *vcs.Repo, profile, base, head string) ([]vcs.Change, error) {
+	if profile == profiles.PR || profile == profiles.Impact {
+		return repo.ChangesFromMergeBase(base, head)
+	}
+	return repo.Changes(base, head)
+}
+
 // localScope derives the trusted changed-file scope from the local repository.
 func localScope(repo *vcs.Repo, profile, base, head string, ignore []string) ([]string, error) {
 	if profile != profiles.PR && profile != profiles.Impact {
 		return nil, nil
 	}
-	changes, err := repo.Changes(base, head)
+	changes, err := changesForProfile(repo, profile, base, head)
 	if err != nil {
 		return nil, err
 	}
@@ -335,6 +344,15 @@ func newStore(cfg config.Config, stateDir string) (store.Store, func() error, er
 	return store.Open(cfg.Store.SQLite, stateDir, cfg.Store.SQLitePath(stateDir))
 }
 
+// scopedStateDir keeps lifecycle state per pull request. A shared state file
+// lets one PR mark another PR's findings resolved.
+func scopedStateDir(base string, pr int) string {
+	if pr <= 0 {
+		return base
+	}
+	return filepath.Join(base, fmt.Sprintf("pr-%d", pr))
+}
+
 // projectName derives the local project folder name: the repository name when
 // known, otherwise the base of the repository directory.
 func projectName(repository, repoDir string) string {
@@ -462,6 +480,7 @@ func run(args []string) error {
 	if cfg.Local.Enabled {
 		effectiveStateDir = filepath.Join(cfg.Local.Dir, project)
 	}
+	effectiveStateDir = scopedStateDir(effectiveStateDir, c.pr)
 	var st store.Store
 	if cfg.Mode == config.ModeStateless || strings.EqualFold(strings.TrimSpace(cfg.Persist.Mode), "never") || *dryRun {
 		st = store.Stateless{}
@@ -741,11 +760,15 @@ func finalizeCmd(args []string) error {
 	if err != nil {
 		return err
 	}
+	stateScope := b.PR
+	if stateScope == 0 {
+		stateScope = c.pr
+	}
 	var st store.Store
 	if cfg.Mode == config.ModeStateless || *dryRun {
 		st = store.Stateless{}
 	} else {
-		opened, closeStore, err := newStore(cfg, *stateDir)
+		opened, closeStore, err := newStore(cfg, scopedStateDir(*stateDir, stateScope))
 		if err != nil {
 			return err
 		}
@@ -944,7 +967,7 @@ func plan(args []string) error {
 		c.profile = cfg.Profile
 	}
 	cfg.ApplyProfile(c.profile)
-	changes, err := repo.Changes(c.base, c.head)
+	changes, err := changesForProfile(repo, c.profile, c.base, c.head)
 	if err != nil {
 		return err
 	}
