@@ -65,7 +65,7 @@ fi
 run git tag -a "$version" -m "$title"
 run git push origin "$version"
 run gh release create "$version" --title "$title" --notes-file "$notes" --latest
-run git tag -f -a v1 "$version" -m "v1 (latest v1.x)"
+run git tag -f -a v1 "$version^{}" -m "v1 (latest v1.x)"
 run git push origin refs/tags/v1 --force
 
 if $dry_run; then
