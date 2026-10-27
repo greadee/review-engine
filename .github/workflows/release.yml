@@ -33,6 +33,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
           TITLE: ${{ inputs.title }}
+          RELEASE_GIT_NAME: github-actions[bot]
+          RELEASE_GIT_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
         run: |
           set -euo pipefail
           notes="docs/releases/${VERSION#v}.md"
