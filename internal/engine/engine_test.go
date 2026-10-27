@@ -553,3 +553,57 @@ func TestStaticBuildFindingIsVerifiedAndBlocks(t *testing.T) {
 		t.Fatalf("a broken build must produce a blocking finding, got %+v", res.Run.NonBlocking())
 	}
 }
+
+func TestCollectRejectsEmptyTrustedScope(t *testing.T) {
+	dir, base, head := setupRepo(t)
+	cfg := config.Default()
+	cfg.Review.Static = false
+	cfg.Review.Semantic = false
+	trusted := cfg
+	trusted.Ignore = []string{"**/*"}
+	repo, err := vcs.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng := New(Options{Config: cfg, CollectConfig: &trusted, Repo: repo, Store: store.Stateless{}})
+	if _, err := eng.Collect(context.Background(), "pr", base, head, "o/r", head); err == nil {
+		t.Fatal("expected an empty trusted scope to be rejected")
+	}
+}
+
+func TestFinalizeRejectsBundleMissingTrustedScope(t *testing.T) {
+	cfg := config.Default()
+	cfg.Review.Semantic = false
+	eng := New(Options{
+		Config: cfg,
+		Store:  store.Stateless{},
+		ScopeVerifier: func(context.Context, bundle.Bundle) ([]string, error) {
+			return []string{"a.go"}, nil
+		},
+	})
+	b := bundle.Bundle{
+		Version:  bundle.Version,
+		Profile:  "pr",
+		RunID:    "pr@x",
+		Selected: 1,
+		Files:    []reviewers.FileContent{{Path: "b.go", Content: "package b\n"}},
+	}
+	if _, err := eng.Finalize(context.Background(), b); err == nil || !strings.Contains(err.Error(), "omits") {
+		t.Fatalf("expected omitted-scope error, got %v", err)
+	}
+}
+
+func TestPublishRejectsGuardedArchiveBranch(t *testing.T) {
+	cfg := config.Default()
+	eng := New(Options{
+		Config: cfg,
+		Store:  store.Stateless{},
+		ArchiveGuard: func(context.Context, string) error {
+			return fmt.Errorf("protected")
+		},
+	})
+	_, err := eng.Publish(context.Background(), nil, "o", "r", Result{Run: report.Run{ID: "pr@x", Profile: "pr"}})
+	if err == nil || !strings.Contains(err.Error(), "protected") {
+		t.Fatalf("expected archive guard error, got %v", err)
+	}
+}

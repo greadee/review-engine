@@ -24,6 +24,10 @@ func (e *Engine) Collect(ctx context.Context, profile, base, head, repository, r
 	if e.opts.Repo == nil {
 		return bundle.Bundle{}, fmt.Errorf("engine: repository is required to collect")
 	}
+	policy := e.opts.Config
+	if e.opts.CollectConfig != nil {
+		policy = *e.opts.CollectConfig
+	}
 	changes, err := e.opts.Repo.Changes(base, head)
 	if err != nil {
 		return bundle.Bundle{}, fmt.Errorf("engine: diff %s..%s: %w", base, head, err)
@@ -34,15 +38,18 @@ func (e *Engine) Collect(ctx context.Context, profile, base, head, repository, r
 	if err != nil {
 		headSHA = head
 	}
-	sc := scope.Resolve(profile, changes, e.opts.Config.Ignore)
+	sc := scope.Resolve(profile, changes, policy.Ignore)
 	allFiles, _ := e.opts.Repo.ListFiles(head)
 	wholeRepo := profile == profiles.Audit || profile == profiles.Sprint
 	if wholeRepo {
 		sc.Files = allFiles
 	}
+	if !wholeRepo && len(changes) > 0 && len(sc.Files) == 0 {
+		return bundle.Bundle{}, fmt.Errorf("engine: the trusted review policy selected no files from %d changed file(s); refusing to produce an empty review", len(changes))
+	}
 
 	set := findings.NewSet()
-	if e.opts.Config.Review.Static {
+	if policy.Review.Static {
 		target := analyzers.Target{
 			Dir:       e.opts.Repo.Dir,
 			Files:     sc.Files,
@@ -60,7 +67,7 @@ func (e *Engine) Collect(ctx context.Context, profile, base, head, repository, r
 		}
 	}
 
-	gathered := e.gather(head, sc.Files, wholeRepo)
+	gathered := e.gather(head, sc.Files, wholeRepo, policy)
 	return bundle.Bundle{
 		Version:        bundle.Version,
 		Profile:        profile,
@@ -71,8 +78,8 @@ func (e *Engine) Collect(ctx context.Context, profile, base, head, repository, r
 		Head:           headSHA,
 		RunID:          runID(profile, headSHA, e.opts.Now()),
 		Generated:      e.opts.Now().UTC(),
-		BlockThreshold: e.opts.Config.Review.BlockThreshold,
-		Rubric:         e.opts.Config.Review.Rubric,
+		BlockThreshold: policy.Review.BlockThreshold,
+		Rubric:         policy.Review.Rubric,
 		Selected:       len(sc.Files),
 		Skipped:        gathered.skipped,
 		Truncated:      gathered.truncated,
@@ -94,6 +101,15 @@ func (e *Engine) Collect(ctx context.Context, profile, base, head, repository, r
 func (e *Engine) Finalize(ctx context.Context, b bundle.Bundle) (Result, error) {
 	if err := b.Validate(); err != nil {
 		return Result{}, err
+	}
+	if e.opts.ScopeVerifier != nil {
+		expected, err := e.opts.ScopeVerifier(ctx, b)
+		if err != nil {
+			return Result{}, fmt.Errorf("engine: verify review scope: %w", err)
+		}
+		if err := verifyBundleScope(b, expected); err != nil {
+			return Result{}, err
+		}
 	}
 	source := sourceIndex(b.Files)
 	set := findings.NewSet()
@@ -218,4 +234,32 @@ func evidenceMatches(f findings.Finding, source map[string]string) bool {
 		return false
 	}
 	return true
+}
+
+// verifyBundleScope rejects a bundle that omits any file the trusted scope says
+// must be reviewed. The bundle is produced in an untrusted job, so its own
+// coverage counts cannot be used to prove that it covered the pull request.
+func verifyBundleScope(b bundle.Bundle, expected []string) error {
+	if len(expected) == 0 {
+		return nil
+	}
+	actual := make(map[string]bool, len(b.Files))
+	for _, f := range b.Files {
+		actual[evidenceKey(f.Path)] = true
+	}
+	var missing []string
+	for _, p := range expected {
+		if !actual[evidenceKey(p)] {
+			missing = append(missing, p)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	const show = 5
+	sample := missing
+	if len(sample) > show {
+		sample = sample[:show]
+	}
+	return fmt.Errorf("engine: bundle omits %d changed file(s) from the trusted review scope (for example: %s)", len(missing), strings.Join(sample, ", "))
 }

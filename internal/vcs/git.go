@@ -54,6 +54,31 @@ func (r *Repo) MergeBase(a, b string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// CurrentBranch returns the checked-out branch, or an error for a detached
+// HEAD.
+func (r *Repo) CurrentBranch() (string, error) {
+	out, err := r.run("symbolic-ref", "--short", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// DefaultBranch returns the remote default branch when it is known, falling
+// back to "main". It is used only as a safety guard for archive writes.
+func (r *Repo) DefaultBranch() (string, error) {
+	out, err := r.run("symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+	if err != nil {
+		return "main", nil
+	}
+	branch := strings.TrimSpace(out)
+	branch = strings.TrimPrefix(branch, "origin/")
+	if branch == "" {
+		return "main", nil
+	}
+	return branch, nil
+}
+
 // Changes lists changed files between base and head, following renames.
 func (r *Repo) Changes(base, head string) ([]Change, error) {
 	out, err := r.run("diff", "--name-status", "-M", base, head)

@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag, for example v1.2.0"
+        required: true
+      title:
+        description: "Release title, for example v1.2.0 Common Chimpanzee"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: release
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.26"
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          TITLE: ${{ inputs.title }}
+        run: |
+          set -euo pipefail
+          notes="docs/releases/${VERSION#v}.md"
+          bash scripts/release.sh --version "$VERSION" --title "$TITLE" --notes "$notes"

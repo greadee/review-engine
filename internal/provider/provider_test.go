@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestOpenAIComplete(t *testing.T) {
@@ -15,7 +16,7 @@ func TestOpenAIComplete(t *testing.T) {
 		data, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(data, &gotBody)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"model":"test-model","choices":[{"message":{"role":"assistant","content":"{\"findings\":[]}"}}],"usage":{"totalTokens":3}}`))
+		_, _ = w.Write([]byte(`{"model":"test-model","choices":[{"message":{"role":"assistant","content":"{\"findings\":[]}"}}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`))
 	}))
 	defer srv.Close()
 
@@ -35,6 +36,9 @@ func TestOpenAIComplete(t *testing.T) {
 	if resp.Text != `{"findings":[]}` {
 		t.Fatalf("unexpected text %q", resp.Text)
 	}
+	if resp.Usage.TotalTokens != 3 || resp.Usage.PromptTokens != 2 || resp.Usage.CompletionTokens != 1 {
+		t.Fatalf("usage not decoded: %+v", resp.Usage)
+	}
 	// For non-OpenAI URLs (like local LM Studio), response_format is
 	// intentionally omitted because those endpoints reject "json_object".
 	if _, ok := gotBody["response_format"]; ok {
@@ -48,7 +52,7 @@ func TestOpenAICompleteSendsMaxReasoningTokens(t *testing.T) {
 		data, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(data, &gotBody)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"model":"test-model","choices":[{"message":{"role":"assistant","content":"{\"findings\":[]}"}}],"usage":{"totalTokens":3}}`))
+		_, _ = w.Write([]byte(`{"model":"test-model","choices":[{"message":{"role":"assistant","content":"{\"findings\":[]}"}}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`))
 	}))
 	defer srv.Close()
 
@@ -77,7 +81,7 @@ func TestOpenAICompleteOmitsMaxReasoningTokensWhenZero(t *testing.T) {
 		data, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(data, &gotBody)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"model":"test-model","choices":[{"message":{"role":"assistant","content":"{\"findings\":[]}"}}],"usage":{"totalTokens":3}}`))
+		_, _ = w.Write([]byte(`{"model":"test-model","choices":[{"message":{"role":"assistant","content":"{\"findings\":[]}"}}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`))
 	}))
 	defer srv.Close()
 
@@ -120,7 +124,7 @@ func TestOpenAICompleteNonOpenAIURL(t *testing.T) {
 		data, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(data, &gotBody)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"model":"test-model","choices":[{"message":{"role":"assistant","content":"{\"findings\":[]}"}}],"usage":{"totalTokens":3}}`))
+		_, _ = w.Write([]byte(`{"model":"test-model","choices":[{"message":{"role":"assistant","content":"{\"findings\":[]}"}}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`))
 	}))
 	defer srv.Close()
 
@@ -149,7 +153,7 @@ func TestOpenAICompleteOmitsResponseFormatWhenSupportsJSONFormatIsFalse(t *testi
 		data, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(data, &gotBody)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"model":"test-model","choices":[{"message":{"role":"assistant","content":"{\"findings\":[]}"}}],"usage":{"totalTokens":3}}`))
+		_, _ = w.Write([]byte(`{"model":"test-model","choices":[{"message":{"role":"assistant","content":"{\"findings\":[]}"}}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`))
 	}))
 	defer srv.Close()
 
@@ -177,7 +181,7 @@ func TestOpenAICompleteSendsResponseFormatWhenSupportsJSONFormatIsTrue(t *testin
 		data, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(data, &gotBody)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"model":"test-model","choices":[{"message":{"role":"assistant","content":"{\"findings\":[]}"}}],"usage":{"totalTokens":3}}`))
+		_, _ = w.Write([]byte(`{"model":"test-model","choices":[{"message":{"role":"assistant","content":"{\"findings\":[]}"}}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`))
 	}))
 	defer srv.Close()
 
@@ -202,5 +206,72 @@ func TestOpenAICompleteSendsResponseFormatWhenSupportsJSONFormatIsTrue(t *testin
 	}
 	if rfMap["type"] != "json_object" {
 		t.Fatalf("expected type json_object, got %v", rfMap["type"])
+	}
+}
+
+func TestOpenAICompleteRetriesRetryableStatuses(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		switch calls {
+		case 1:
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":"rate limited"}`))
+		case 2:
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":"server"}`))
+		default:
+			_, _ = w.Write([]byte(`{"model":"m","choices":[{"message":{"content":"ok"}}],"usage":{"total_tokens":3}}`))
+		}
+	}))
+	defer srv.Close()
+
+	p := NewOpenAI(Config{BaseURL: srv.URL, APIKey: "k", Model: "m"})
+	p.sleep = func(context.Context, time.Duration) error { return nil }
+	resp, err := p.Complete(context.Background(), Request{Messages: []Message{{Role: "user", Content: "hi"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 3 || resp.Text != "ok" || resp.Usage.TotalTokens != 3 {
+		t.Fatalf("calls=%d resp=%+v", calls, resp)
+	}
+}
+
+func TestOpenAICompleteDoesNotRetryBadRequest(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"bad request"}`))
+	}))
+	defer srv.Close()
+
+	p := NewOpenAI(Config{BaseURL: srv.URL, APIKey: "k", Model: "m"})
+	p.sleep = func(context.Context, time.Duration) error { return nil }
+	if _, err := p.Complete(context.Background(), Request{Messages: []Message{{Role: "user", Content: "hi"}}}); err == nil {
+		t.Fatal("expected error")
+	}
+	if calls != 1 {
+		t.Fatalf("non-retryable status should be called once, got %d", calls)
+	}
+}
+
+func TestOpenAICompleteExhaustsRetries(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"server"}`))
+	}))
+	defer srv.Close()
+
+	p := NewOpenAI(Config{BaseURL: srv.URL, APIKey: "k", Model: "m"})
+	p.sleep = func(context.Context, time.Duration) error { return nil }
+	if _, err := p.Complete(context.Background(), Request{Messages: []Message{{Role: "user", Content: "hi"}}}); err == nil {
+		t.Fatal("expected retry exhaustion error")
+	}
+	if calls != p.maxAttempts {
+		t.Fatalf("expected %d attempts, got %d", p.maxAttempts, calls)
 	}
 }

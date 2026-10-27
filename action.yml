@@ -48,7 +48,7 @@ inputs:
     required: false
     default: HEAD
   config:
-    description: "Path to revu.yaml in the caller repository"
+    description: "Path to revu.yaml for run/finalize; collect policy comes from the base revision"
     required: false
     default: revu.yaml
   repository:
@@ -129,14 +129,16 @@ runs:
   using: composite
   steps:
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
       with:
         go-version: "1.26"
 
     - name: Build revu
       shell: bash
       working-directory: ${{ github.action_path }}
-      run: go build -o "$RUNNER_TEMP/revu" ./cmd/revu
+      env:
+        REVIEW_ACTION_REF: ${{ github.action_ref }}
+      run: go build -ldflags "-X main.version=${REVIEW_ACTION_REF:-dev}" -o "$RUNNER_TEMP/revu" ./cmd/revu
 
     - name: Run review
       id: run

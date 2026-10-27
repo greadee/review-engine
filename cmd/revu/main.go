@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -30,7 +31,7 @@ import (
 	"github.com/greadee/review-engine/internal/vcs"
 )
 
-const version = "0.1.0"
+var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -68,7 +69,7 @@ func main() {
 	case "eval":
 		err = evalCorpus(os.Args[2:])
 	case "version":
-		fmt.Println(version)
+		fmt.Println(currentVersion())
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -80,6 +81,41 @@ func main() {
 		fmt.Fprintf(os.Stderr, "revu: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// currentVersion prefers an injected release version, then module metadata, then
+// the VCS revision of a development build.
+func currentVersion() string {
+	if v := strings.TrimSpace(version); v != "" && v != "dev" {
+		return v
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "dev"
+	}
+	if v := strings.TrimSpace(info.Main.Version); v != "" && v != "(devel)" {
+		return v
+	}
+	var revision string
+	var dirty bool
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			revision = setting.Value
+		case "vcs.modified":
+			dirty = setting.Value == "true"
+		}
+	}
+	if revision == "" {
+		return "dev"
+	}
+	if len(revision) > 12 {
+		revision = revision[:12]
+	}
+	if dirty {
+		return "dev+" + revision + ".dirty"
+	}
+	return "dev+" + revision
 }
 
 func usage() {
@@ -133,6 +169,139 @@ func loadConfig(c commonFlags) (config.Config, error) {
 		_ = os.Setenv("REVIEW_GLOBAL_CONFIG", c.globalConfig)
 	}
 	return config.Load(c.configPath)
+}
+
+// loadTrustedConfig reads the review policy from the base revision. The
+// working tree belongs to the pull request and must not decide what gets
+// reviewed or whether static analysis runs.
+func loadTrustedConfig(repo *vcs.Repo, base string) (config.Config, error) {
+	data, err := repo.File(base, "revu.yaml")
+	if err != nil {
+		return config.LoadData(nil)
+	}
+	cfg, err := config.LoadData(data)
+	if err != nil {
+		return config.Config{}, fmt.Errorf("config: trusted policy at %s: %w", base, err)
+	}
+	return cfg, nil
+}
+
+// localScope derives the trusted changed-file scope from the local repository.
+func localScope(repo *vcs.Repo, profile, base, head string, ignore []string) ([]string, error) {
+	if profile != profiles.PR && profile != profiles.Impact {
+		return nil, nil
+	}
+	changes, err := repo.Changes(base, head)
+	if err != nil {
+		return nil, err
+	}
+	if len(changes) == 0 {
+		return nil, nil
+	}
+	sc := scope.Resolve(profile, changes, ignore)
+	if len(sc.Files) == 0 {
+		return nil, fmt.Errorf("trusted policy selected no files from %d changed file(s)", len(changes))
+	}
+	return sc.Files, nil
+}
+
+// githubScope derives the trusted changed-file scope from the pull request API.
+func githubScope(ctx context.Context, gh *vcs.GitHub, owner, repo string, b bundle.Bundle, ignore []string) ([]string, error) {
+	if b.Profile != profiles.PR && b.Profile != profiles.Impact {
+		return nil, nil
+	}
+	if b.PR <= 0 {
+		return nil, fmt.Errorf("pull request number is required to verify review scope")
+	}
+	files, err := gh.PullRequestFiles(ctx, owner, repo, b.PR)
+	if err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return nil, nil
+	}
+	changes := make([]vcs.Change, 0, len(files))
+	for _, f := range files {
+		status := "M"
+		if f.Status == "removed" {
+			status = "D"
+		}
+		changes = append(changes, vcs.Change{Status: status, Path: f.Filename})
+	}
+	sc := scope.Resolve(b.Profile, changes, ignore)
+	if len(sc.Files) == 0 {
+		return nil, fmt.Errorf("trusted policy selected no files from %d changed file(s)", len(files))
+	}
+	return sc.Files, nil
+}
+
+// trustedBaseConfig fetches revu.yaml from the pull request's base revision,
+// not from the pull-request checkout.
+func trustedBaseConfig(ctx context.Context, gh *vcs.GitHub, owner, repo string, b bundle.Bundle) (config.Config, error) {
+	if b.PR <= 0 {
+		return config.Config{}, fmt.Errorf("pull request number is required to load the trusted policy")
+	}
+	pr, err := gh.PR(ctx, owner, repo, b.PR)
+	if err != nil {
+		return config.Config{}, err
+	}
+	if b.Head != "" && !strings.EqualFold(pr.Head.SHA, b.Head) && !strings.EqualFold(pr.MergeCommitSHA, b.Head) {
+		return config.Config{}, fmt.Errorf("bundle head %s does not match pull request head %s (merge commit %s)", b.Head, pr.Head.SHA, pr.MergeCommitSHA)
+	}
+	data, found, err := gh.FileAtRef(ctx, owner, repo, "revu.yaml", pr.Base.SHA)
+	if err != nil {
+		return config.Config{}, err
+	}
+	if !found {
+		data = nil
+	}
+	cfg, err := config.LoadData(data)
+	if err != nil {
+		return config.Config{}, fmt.Errorf("config: trusted policy at %s: %w", pr.Base.SHA, err)
+	}
+	cfg.ApplyProfile(b.Profile)
+	return cfg, nil
+}
+
+// localArchiveGuard rejects archive targets that are the checked-out branch or
+// the local default branch.
+func localArchiveGuard(repo *vcs.Repo) engine.ArchiveGuard {
+	return func(_ context.Context, branch string) error {
+		if strings.EqualFold(branch, "main") || strings.EqualFold(branch, "master") {
+			return fmt.Errorf("refusing to write findings to a protected branch")
+		}
+		if def, err := repo.DefaultBranch(); err == nil && strings.EqualFold(branch, def) {
+			return fmt.Errorf("refusing to write findings to the default branch")
+		}
+		if current, err := repo.CurrentBranch(); err == nil && strings.EqualFold(branch, current) {
+			return fmt.Errorf("refusing to write findings to the pull request branch")
+		}
+		return nil
+	}
+}
+
+// githubArchiveGuard rejects archive targets that are the repository default
+// branch or the pull request head branch.
+func githubArchiveGuard(ctx context.Context, gh *vcs.GitHub, owner, repo string, pr int) engine.ArchiveGuard {
+	return func(ctx context.Context, branch string) error {
+		def, err := gh.DefaultBranch(ctx, owner, repo)
+		if err != nil {
+			return err
+		}
+		if strings.EqualFold(branch, def) {
+			return fmt.Errorf("refusing to write findings to the default branch %q", def)
+		}
+		if pr > 0 {
+			info, err := gh.PR(ctx, owner, repo, pr)
+			if err != nil {
+				return err
+			}
+			if strings.EqualFold(branch, info.Head.Ref) {
+				return fmt.Errorf("refusing to write findings to the pull request branch %q", info.Head.Ref)
+			}
+		}
+		return nil
+	}
 }
 
 // resolveCI fills empty revision flags from the CI environment.
@@ -198,6 +367,8 @@ func run(args []string) error {
 	risk := fs.String("risk", "", "severity threshold for --persist on-risk (P0..P3)")
 	providerName := fs.String("provider", "", "override provider name")
 	model := fs.String("model", "", "override model id")
+	staticFlag := fs.String("static", "", "override static analysis (true|false)")
+	semanticFlag := fs.String("semantic", "", "override semantic review (true|false)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -207,13 +378,22 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	repo, err := vcs.Open(c.repoDir)
+	if err != nil {
+		return err
+	}
+	trusted, err := loadTrustedConfig(repo, c.base)
+	if err != nil {
+		return err
+	}
 	if c.profile == "" {
-		c.profile = cfg.Profile
+		c.profile = trusted.Profile
 	}
 	if !profiles.Valid(c.profile) {
 		return fmt.Errorf("unknown profile %q (known: %s)", c.profile, strings.Join(profiles.All(), ", "))
 	}
 	cfg.Profile = c.profile
+	trusted.ApplyProfile(c.profile)
 	cfg.ApplyProfile(c.profile)
 	if *local || *localDir != "" {
 		cfg.Local.Enabled = true
@@ -241,9 +421,32 @@ func run(args []string) error {
 		cfg.Review.Rubric = profiles.Rubric(c.profile)
 	}
 
-	repo, err := vcs.Open(c.repoDir)
-	if err != nil {
-		return err
+	// Security-sensitive policy comes from the base revision, not the PR
+	// checkout. Provider, archive, and persistence settings remain caller
+	// configuration.
+	cfg.Ignore = trusted.Ignore
+	cfg.Review.Static = trusted.Review.Static
+	cfg.Review.Semantic = trusted.Review.Semantic
+	cfg.Review.MaxFiles = trusted.Review.MaxFiles
+	cfg.Review.MaxFileBytes = trusted.Review.MaxFileBytes
+	cfg.Review.BlockThreshold = trusted.Review.BlockThreshold
+	cfg.Review.CoverageThreshold = trusted.Review.CoverageThreshold
+	if len(trusted.Review.Rubric) > 0 {
+		cfg.Review.Rubric = trusted.Review.Rubric
+	}
+	if *staticFlag != "" {
+		v, err := strconv.ParseBool(strings.TrimSpace(*staticFlag))
+		if err != nil {
+			return fmt.Errorf("--static: %w", err)
+		}
+		cfg.Review.Static = v
+	}
+	if *semanticFlag != "" {
+		v, err := strconv.ParseBool(strings.TrimSpace(*semanticFlag))
+		if err != nil {
+			return fmt.Errorf("--semantic: %w", err)
+		}
+		cfg.Review.Semantic = v
 	}
 
 	prov, err := buildProvider(cfg, *dryRun)
@@ -277,6 +480,10 @@ func run(args []string) error {
 		Provider: prov,
 		Reviewer: reviewer,
 		Store:    st,
+		ScopeVerifier: func(_ context.Context, b bundle.Bundle) ([]string, error) {
+			return localScope(repo, b.Profile, b.Base, b.Head, trusted.Ignore)
+		},
+		ArchiveGuard: localArchiveGuard(repo),
 	})
 
 	res, err := eng.RunRange(context.Background(), c.profile, c.base, c.head, c.repository, c.head)
@@ -414,7 +621,11 @@ func collectCmd(args []string) error {
 		return err
 	}
 	resolveCI(&c)
-	cfg, err := loadConfig(c)
+	repo, err := vcs.Open(c.repoDir)
+	if err != nil {
+		return err
+	}
+	cfg, err := loadTrustedConfig(repo, c.base)
 	if err != nil {
 		return err
 	}
@@ -427,10 +638,6 @@ func collectCmd(args []string) error {
 	cfg.ApplyProfile(c.profile)
 	if len(cfg.Review.Rubric) == 0 {
 		cfg.Review.Rubric = profiles.Rubric(c.profile)
-	}
-	repo, err := vcs.Open(c.repoDir)
-	if err != nil {
-		return err
 	}
 	// Collect never needs a provider or tracker: it must not touch secrets.
 	eng := engine.New(engine.Options{Config: cfg, Repo: repo, PR: c.pr})
@@ -495,6 +702,41 @@ func finalizeCmd(args []string) error {
 	if len(cfg.Review.Rubric) == 0 {
 		cfg.Review.Rubric = profiles.Rubric(b.Profile)
 	}
+
+	ctx := context.Background()
+	needsScope := b.Profile == profiles.PR || b.Profile == profiles.Impact
+	needsGitHub := needsScope || *publish || *comment
+	var gh *vcs.GitHub
+	var owner, name string
+	var hasRepo bool
+	if needsGitHub && !*dryRun {
+		repoRef := c.repository
+		if repoRef == "" {
+			repoRef = b.Repository
+		}
+		owner, name, err = splitRepo(repoRef)
+		if err != nil {
+			return err
+		}
+		hasRepo = true
+		gh = vcs.NewGitHub(cfg.GitHubToken)
+	}
+
+	var verifier engine.ScopeVerifier
+	if needsScope && !*dryRun {
+		trusted, err := trustedBaseConfig(ctx, gh, owner, name, b)
+		if err != nil {
+			return err
+		}
+		verifier = func(ctx context.Context, b bundle.Bundle) ([]string, error) {
+			return githubScope(ctx, gh, owner, name, b, trusted.Ignore)
+		}
+	}
+	var guard engine.ArchiveGuard
+	if *publish && !*dryRun {
+		guard = githubArchiveGuard(ctx, gh, owner, name, b.PR)
+	}
+
 	prov, err := buildProvider(cfg, *dryRun)
 	if err != nil {
 		return err
@@ -511,10 +753,12 @@ func finalizeCmd(args []string) error {
 		st = opened
 	}
 	eng := engine.New(engine.Options{
-		Config:   cfg,
-		Provider: prov,
-		Reviewer: reviewers.New(prov, cfg.Provider.Model, cfg.Provider.MaxReasoningTokens, cfg.Provider.SupportsJSONFormat),
-		Store:    st,
+		Config:        cfg,
+		Provider:      prov,
+		Reviewer:      reviewers.New(prov, cfg.Provider.Model, cfg.Provider.MaxReasoningTokens, cfg.Provider.SupportsJSONFormat),
+		Store:         st,
+		ScopeVerifier: verifier,
+		ArchiveGuard:  guard,
 	})
 	res, err := eng.Finalize(context.Background(), b)
 	if err != nil {
@@ -542,17 +786,11 @@ func finalizeCmd(args []string) error {
 	}
 
 	if (*publish || *comment) && !*dryRun {
-		repoRef := c.repository
-		if repoRef == "" {
-			repoRef = b.Repository
+		if !hasRepo {
+			return fmt.Errorf("--repository is required to publish or comment")
 		}
-		owner, name, err := splitRepo(repoRef)
-		if err != nil {
-			return err
-		}
-		gh := vcs.NewGitHub(cfg.GitHubToken)
 		if *publish {
-			url, err := eng.Publish(context.Background(), gh, owner, name, res)
+			url, err := eng.Publish(ctx, gh, owner, name, res)
 			if err != nil {
 				return err
 			}
@@ -561,7 +799,7 @@ func finalizeCmd(args []string) error {
 		}
 		if *comment && c.pr > 0 {
 			marker := fmt.Sprintf("<!-- revu:pr=%d -->", c.pr)
-			if err := gh.UpsertComment(context.Background(), owner, name, c.pr, marker, report.SummaryMarkdown(res.Run)); err != nil {
+			if err := gh.UpsertComment(ctx, owner, name, c.pr, marker, report.SummaryMarkdown(res.Run)); err != nil {
 				return err
 			}
 			fmt.Printf("posted comment on PR #%d\n", c.pr)
@@ -653,7 +891,7 @@ func issueReview(args []string) error {
 	verdict := issues.EvaluateWithOptions(issue, reader, issues.Options{Approved: approved})
 	closed := strings.EqualFold(issue.State, "closed")
 	if *comment {
-		marker := fmt.Sprintf("<!-- revu:run=%s -->", res.Run.ID)
+		marker := fmt.Sprintf("<!-- revu:issue=%d -->", *issueNum)
 		if err := gh.UpsertComment(ctx, owner, name, *issueNum, marker, report.SummaryMarkdown(res.Run)); err != nil {
 			return err
 		}
@@ -694,7 +932,11 @@ func plan(args []string) error {
 		return err
 	}
 	resolveCI(&c)
-	cfg, err := loadConfig(c)
+	repo, err := vcs.Open(c.repoDir)
+	if err != nil {
+		return err
+	}
+	cfg, err := loadTrustedConfig(repo, c.base)
 	if err != nil {
 		return err
 	}
@@ -702,10 +944,6 @@ func plan(args []string) error {
 		c.profile = cfg.Profile
 	}
 	cfg.ApplyProfile(c.profile)
-	repo, err := vcs.Open(c.repoDir)
-	if err != nil {
-		return err
-	}
 	changes, err := repo.Changes(c.base, c.head)
 	if err != nil {
 		return err
@@ -1081,7 +1319,7 @@ func showConfig(args []string) error {
 	if c.profile != "" {
 		cfg.ApplyProfile(c.profile)
 	}
-	data, err := config.Marshal(cfg)
+	data, err := config.Marshal(cfg.Redacted())
 	if err != nil {
 		return err
 	}

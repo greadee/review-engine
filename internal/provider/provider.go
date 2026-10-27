@@ -32,9 +32,9 @@ type Request struct {
 
 // Usage reports token consumption.
 type Usage struct {
-	PromptTokens     int `json:"promptTokens,omitempty"`
-	CompletionTokens int `json:"completionTokens,omitempty"`
-	TotalTokens      int `json:"totalTokens,omitempty"`
+	PromptTokens     int `json:"prompt_tokens,omitempty"`
+	CompletionTokens int `json:"completion_tokens,omitempty"`
+	TotalTokens      int `json:"total_tokens,omitempty"`
 }
 
 // Response is a completion result.

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/greadee/review-engine/internal/analyzers"
+	"github.com/greadee/review-engine/internal/bundle"
 	"github.com/greadee/review-engine/internal/config"
 	"github.com/greadee/review-engine/internal/detectors"
 	"github.com/greadee/review-engine/internal/findings"
@@ -24,6 +25,13 @@ import (
 	"github.com/greadee/review-engine/internal/vcs"
 )
 
+// ScopeVerifier returns the changed files that the trusted side expects the
+// bundle to cover. It must derive them independently of the untrusted bundle.
+type ScopeVerifier func(context.Context, bundle.Bundle) ([]string, error)
+
+// ArchiveGuard rejects archive branches that must never receive bot writes.
+type ArchiveGuard func(context.Context, string) error
+
 // Options configures the engine.
 type Options struct {
 	Config    config.Config
@@ -33,6 +41,15 @@ type Options struct {
 	Reviewer  *reviewers.Semantic
 	Store     store.Store
 	Now       func() time.Time
+	// CollectConfig is the trusted policy for the secret-free collect phase.
+	// When nil, Config is used.
+	CollectConfig *config.Config
+	// ScopeVerifier, when set, checks the finalized bundle against the trusted
+	// pull-request scope. It is required for PR/impact finalization in CI.
+	ScopeVerifier ScopeVerifier
+	// ArchiveGuard, when set, rejects archive branch names such as the default
+	// branch or the pull-request head branch.
+	ArchiveGuard ArchiveGuard
 	// PR is the pull request number, recorded in the bundle so the finalize
 	// phase can bind the artifact to the trusted event.
 	PR int
@@ -110,9 +127,9 @@ type gatherStats struct {
 	truncatedBytes int
 }
 
-func (e *Engine) gather(ref string, paths []string, wholeRepo bool) gatherStats {
-	maxFiles := e.opts.Config.Review.MaxFiles
-	maxBytes := e.opts.Config.Review.MaxFileBytes
+func (e *Engine) gather(ref string, paths []string, wholeRepo bool, policy config.Config) gatherStats {
+	maxFiles := policy.Review.MaxFiles
+	maxBytes := policy.Review.MaxFileBytes
 	if maxFiles <= 0 {
 		maxFiles = 60
 	}
