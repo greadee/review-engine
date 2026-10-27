@@ -32,7 +32,7 @@ The release note is `docs/releases/1.2.0.md`.
 - Provider 408/429/5xx and transient failures are retried with a bounded wait.
 - GitHub token redaction, comment idempotency, and path pinning are covered by tests.
 
-## [1.1.1] - 2026-10-20
+## [1.1.0] - 2026-10-20
 
 **Common Rat** — post-v1 hardening patch.
 
