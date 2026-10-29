@@ -190,7 +190,9 @@ type workflowFile struct {
 	Jobs        map[string]struct {
 		Permissions map[string]string `yaml:"permissions"`
 		Steps       []struct {
+			ID   string            `yaml:"id"`
 			Uses string            `yaml:"uses"`
+			Run  string            `yaml:"run"`
 			With map[string]string `yaml:"with"`
 			Env  map[string]string `yaml:"env"`
 		} `yaml:"steps"`
@@ -269,6 +271,15 @@ func TestWorkflowSecurityGuarantees(t *testing.T) {
 	if !bound {
 		t.Error("finalize must bind expect-repository/pr/head/profile to the workflow_run event")
 	}
+	var resolvedPR bool
+	for _, step := range finalize.Steps {
+		if step.ID == "pr" && strings.Contains(step.Run, "gh api") {
+			resolvedPR = true
+		}
+	}
+	if !resolvedPR {
+		t.Error("fork-safe finalize must resolve the PR number through the API when workflow_run omits it")
+	}
 	if !hasPRStateCache(finalize.Steps) {
 		t.Error("fork-safe finalize must cache .review-state with a per-PR key")
 	}
@@ -292,14 +303,18 @@ func TestWorkflowSecurityGuarantees(t *testing.T) {
 }
 
 func hasPRStateCache(steps []struct {
+	ID   string            `yaml:"id"`
 	Uses string            `yaml:"uses"`
+	Run  string            `yaml:"run"`
 	With map[string]string `yaml:"with"`
 	Env  map[string]string `yaml:"env"`
 }) bool {
 	for _, step := range steps {
+		key := step.With["key"]
 		if strings.HasPrefix(step.Uses, "actions/cache") &&
 			step.With["path"] == ".review-state" &&
-			strings.Contains(step.With["key"], "pr-") {
+			strings.Contains(key, "pr-") &&
+			!strings.Contains(key, "pull_requests[0].number") {
 			return true
 		}
 	}

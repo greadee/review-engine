@@ -27,24 +27,39 @@ jobs:
           name: revu-bundle
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
+      - name: Resolve pull request number
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.event.workflow_run.repository.full_name }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          EVENT_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+        run: |
+          set -euo pipefail
+          pr="${EVENT_PR:-}"
+          if [ -z "$pr" ]; then
+            pr="$(gh api "repos/${REPOSITORY}/commits/${HEAD_SHA}/pulls" --jq '.[0].number // empty')"
+          fi
+          [ -n "$pr" ] || { echo "could not resolve pull request number" >&2; exit 1; }
+          echo "number=$pr" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .review-state
-          key: revu-state-${{ github.repository }}-pr-${{ github.event.workflow_run.pull_requests[0].number }}-${{ github.run_id }}
+          key: revu-state-${{ github.repository }}-pr-${{ steps.pr.outputs.number }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            revu-state-${{ github.repository }}-pr-${{ github.event.workflow_run.pull_requests[0].number }}-
+            revu-state-${{ github.repository }}-pr-${{ steps.pr.outputs.number }}-
       - uses: greadee/review-engine@7de258fcb3c50467bdc87f89443af800527f706a
         with:
           phase: finalize
           repository: ${{ github.event.workflow_run.repository.full_name }}
-          pr: ${{ github.event.workflow_run.pull_requests[0].number }}
+          pr: ${{ steps.pr.outputs.number }}
           model: gpt-4o-mini
           base-url: https://api.openai.com/v1
           allowed-base-urls: https://api.openai.com/v1
           block-threshold: P1
           # Bind the artifact to the trusted event, not to the bundle's own claims.
           expect-repository: ${{ github.event.workflow_run.repository.full_name }}
-          expect-pr: ${{ github.event.workflow_run.pull_requests[0].number }}
+          expect-pr: ${{ steps.pr.outputs.number }}
           expect-head: ${{ github.event.workflow_run.head_sha }}
           expect-profile: pr
           bundle: bundle.json

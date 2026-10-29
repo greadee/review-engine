@@ -56,6 +56,7 @@ type StoreConfig struct {
 	// SQLite enables the SQLite backend (default false).
 	SQLite bool `yaml:"sqlite"`
 	// Path is the SQLite database path. Empty uses <state-dir>/review.db.
+	// The CLI applies a per-PR suffix to explicit paths when running in a PR scope.
 	Path string `yaml:"path"`
 }
 

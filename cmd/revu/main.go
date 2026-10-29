@@ -186,21 +186,12 @@ func loadTrustedConfig(repo *vcs.Repo, base string) (config.Config, error) {
 	return cfg, nil
 }
 
-// changesForProfile uses the merge base for pull-request-style profiles so a
-// moved base branch does not add reverse changes to the review.
-func changesForProfile(repo *vcs.Repo, profile, base, head string) ([]vcs.Change, error) {
-	if profile == profiles.PR || profile == profiles.Impact {
-		return repo.ChangesFromMergeBase(base, head)
-	}
-	return repo.Changes(base, head)
-}
-
 // localScope derives the trusted changed-file scope from the local repository.
 func localScope(repo *vcs.Repo, profile, base, head string, ignore []string) ([]string, error) {
 	if profile != profiles.PR && profile != profiles.Impact {
 		return nil, nil
 	}
-	changes, err := changesForProfile(repo, profile, base, head)
+	changes, err := scope.ChangesForProfile(repo, profile, base, head)
 	if err != nil {
 		return nil, err
 	}
@@ -340,8 +331,12 @@ func resolveCI(c *commonFlags) ci.Info {
 }
 
 // newStore selects the tracking backend from configuration.
-func newStore(cfg config.Config, stateDir string) (store.Store, func() error, error) {
-	return store.Open(cfg.Store.SQLite, stateDir, cfg.Store.SQLitePath(stateDir))
+func newStore(cfg config.Config, stateDir string, pr int) (store.Store, func() error, error) {
+	dbPath := cfg.Store.SQLitePath(stateDir)
+	if cfg.Store.SQLite && pr > 0 && strings.TrimSpace(cfg.Store.Path) != "" {
+		dbPath = scopedSQLitePath(cfg.Store.Path, pr)
+	}
+	return store.Open(cfg.Store.SQLite, stateDir, dbPath)
 }
 
 // scopedStateDir keeps lifecycle state per pull request. A shared state file
@@ -351,6 +346,20 @@ func scopedStateDir(base string, pr int) string {
 		return base
 	}
 	return filepath.Join(base, fmt.Sprintf("pr-%d", pr))
+}
+
+// scopedSQLitePath applies the same per-PR isolation when the consumer pins an
+// explicit SQLite file instead of using the state directory default.
+func scopedSQLitePath(path string, pr int) string {
+	path = strings.TrimSpace(path)
+	if pr <= 0 || path == "" || path == ":memory:" {
+		return path
+	}
+	ext := filepath.Ext(path)
+	if ext == "" {
+		return fmt.Sprintf("%s.pr-%d", path, pr)
+	}
+	return fmt.Sprintf("%s.pr-%d%s", strings.TrimSuffix(path, ext), pr, ext)
 }
 
 // projectName derives the local project folder name: the repository name when
@@ -485,7 +494,7 @@ func run(args []string) error {
 	if cfg.Mode == config.ModeStateless || strings.EqualFold(strings.TrimSpace(cfg.Persist.Mode), "never") || *dryRun {
 		st = store.Stateless{}
 	} else {
-		opened, closeStore, err := newStore(cfg, effectiveStateDir)
+		opened, closeStore, err := newStore(cfg, effectiveStateDir, c.pr)
 		if err != nil {
 			return err
 		}
@@ -768,7 +777,7 @@ func finalizeCmd(args []string) error {
 	if cfg.Mode == config.ModeStateless || *dryRun {
 		st = store.Stateless{}
 	} else {
-		opened, closeStore, err := newStore(cfg, scopedStateDir(*stateDir, stateScope))
+		opened, closeStore, err := newStore(cfg, scopedStateDir(*stateDir, stateScope), stateScope)
 		if err != nil {
 			return err
 		}
@@ -878,7 +887,7 @@ func issueReview(args []string) error {
 	if cfg.Mode == config.ModeStateless {
 		st = store.Stateless{}
 	} else {
-		opened, closeStore, err := newStore(cfg, *stateDir)
+		opened, closeStore, err := newStore(cfg, *stateDir, 0)
 		if err != nil {
 			return err
 		}
@@ -967,7 +976,7 @@ func plan(args []string) error {
 		c.profile = cfg.Profile
 	}
 	cfg.ApplyProfile(c.profile)
-	changes, err := changesForProfile(repo, c.profile, c.base, c.head)
+	changes, err := scope.ChangesForProfile(repo, c.profile, c.base, c.head)
 	if err != nil {
 		return err
 	}

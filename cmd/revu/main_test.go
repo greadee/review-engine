@@ -349,3 +349,15 @@ func TestLocalScopeUsesMergeBase(t *testing.T) {
 		t.Fatalf("localScope = %v, want only a.go", got)
 	}
 }
+
+func TestScopedSQLitePath(t *testing.T) {
+	if got := scopedSQLitePath("/tmp/review.db", 42); got != "/tmp/review.pr-42.db" {
+		t.Fatalf("db scope = %q", got)
+	}
+	if got := scopedSQLitePath("/tmp/review", 42); got != "/tmp/review.pr-42" {
+		t.Fatalf("extensionless db scope = %q", got)
+	}
+	if got := scopedSQLitePath(":memory:", 42); got != ":memory:" {
+		t.Fatalf("memory db scope = %q", got)
+	}
+}

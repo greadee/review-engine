@@ -285,8 +285,10 @@ numbers.
 Tracking is on by default and uses the JSON store at `--state-dir`
 (`.review-state`). Set `store.sqlite: true` (or `REVIEW_STORE_SQLITE=true`) to use
 the opt-in SQLite backend, which is pure-Go (no cgo) and stores at
-`<state-dir>/review.db` by default. Both backends implement the same interface and
-hold identical findings. See [`docs/adr/0006-optional-sqlite-store.md`](docs/adr/0006-optional-sqlite-store.md).
+`<state-dir>/review.db` by default. An explicit `store.path` is also scoped per
+PR (`review.pr-<number>.db`) so one PR cannot replace another PR's state. Both
+backends implement the same interface and hold identical findings. See
+[`docs/adr/0006-optional-sqlite-store.md`](docs/adr/0006-optional-sqlite-store.md).
 
 In CI, the example workflows cache `.review-state` per pull request. The CLI
 stores lifecycle state under `.review-state/pr-<number>`, so one PR cannot mark

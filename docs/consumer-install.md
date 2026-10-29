@@ -51,12 +51,16 @@ across runs:
 
 ```yaml
 expect-repository: ${{ github.event.workflow_run.repository.full_name }}
-expect-pr: ${{ github.event.workflow_run.pull_requests[0].number }}
+expect-pr: ${{ steps.pr.outputs.number }}
 expect-head: ${{ github.event.workflow_run.head_sha }}
 expect-profile: pr
 base-url: https://api.openai.com/v1
 allowed-base-urls: https://api.openai.com/v1
 ```
+
+The example resolves the PR number in a step before cache/finalize, falling back
+to the commit-associated pull requests API when the `workflow_run` payload omits
+it (as it can for fork PRs).
 
 ## Single-step (trusted changes only)
 

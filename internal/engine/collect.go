@@ -14,7 +14,6 @@ import (
 	"github.com/greadee/review-engine/internal/reviewers"
 	"github.com/greadee/review-engine/internal/scope"
 	"github.com/greadee/review-engine/internal/store"
-	"github.com/greadee/review-engine/internal/vcs"
 )
 
 // Collect runs the untrusted, secret-free phase: it resolves scope, gathers
@@ -29,13 +28,7 @@ func (e *Engine) Collect(ctx context.Context, profile, base, head, repository, r
 	if e.opts.CollectConfig != nil {
 		policy = *e.opts.CollectConfig
 	}
-	var changes []vcs.Change
-	var err error
-	if profile == profiles.PR || profile == profiles.Impact {
-		changes, err = e.opts.Repo.ChangesFromMergeBase(base, head)
-	} else {
-		changes, err = e.opts.Repo.Changes(base, head)
-	}
+	changes, err := scope.ChangesForProfile(e.opts.Repo, profile, base, head)
 	if err != nil {
 		return bundle.Bundle{}, fmt.Errorf("engine: diff %s..%s: %w", base, head, err)
 	}

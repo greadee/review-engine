@@ -607,3 +607,39 @@ func TestPublishRejectsGuardedArchiveBranch(t *testing.T) {
 		t.Fatalf("expected archive guard error, got %v", err)
 	}
 }
+
+func TestCollectUsesMergeBaseForPR(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q", "-b", "main")
+	writeFile(t, dir, "a.go", "package a\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "base")
+
+	git(t, dir, "switch", "-c", "feature")
+	writeFile(t, dir, "a.go", "package a\n\nvar X = 1\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "feature")
+	head := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	git(t, dir, "switch", "main")
+	writeFile(t, dir, "b.go", "package a\n\nvar Y = 2\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "main advance")
+	baseTip := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	cfg := config.Default()
+	cfg.Review.Static = false
+	cfg.Review.Semantic = false
+	repo, err := vcs.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng := New(Options{Config: cfg, Repo: repo, Store: store.Stateless{}})
+	b, err := eng.Collect(context.Background(), "pr", baseTip, head, "o/r", head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Files) != 1 || b.Files[0].Path != "a.go" {
+		t.Fatalf("collect used the wrong scope: %+v", b.Files)
+	}
+}
