@@ -104,6 +104,8 @@ the correct spellings.
   hardening. Released: `v1.0.0`, `v1.0.1`.
 - **1.1 Common Rat** — Named patch `v1.1.0`; post-v1 hardening.
 - **1.2 Common Chimpanzee** — released as `v1.2.0`. Release purpose: Restore.
-- **1.3 Narwhal** — planned. Release purpose: Correctness & Security.
+- **1.3 Narwhal** — in progress on `1.3-correctness-security`. Release purpose:
+  Correctness & Security. Sprint plan:
+  [`docs/sprints/1.3.0-narwhal-correctness-security.md`](sprints/1.3.0-narwhal-correctness-security.md).
 - **1.4 Harpy Eagle** — planned. Release purpose: Polish.
 - **1.5 Polar Bear** — planned. Release purpose: Stability.

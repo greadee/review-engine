@@ -61,6 +61,33 @@ func TestReviewFallbacks(t *testing.T) {
 	}
 }
 
+func TestNewWithLimits(t *testing.T) {
+	if r := NewWithLimits(nil, "m", 0, nil, 3, 4000); r.MaxBatchFiles != 3 || r.MaxBatchBytes != 4000 {
+		t.Fatalf("explicit limits not applied: %d/%d", r.MaxBatchFiles, r.MaxBatchBytes)
+	}
+	if r := NewWithLimits(nil, "m", 0, nil, 0, 0); r.MaxBatchFiles != 25 || r.MaxBatchBytes != 150_000 {
+		t.Fatalf("default limits changed: %d/%d", r.MaxBatchFiles, r.MaxBatchBytes)
+	}
+	if r := NewWithLimits(nil, "m", 2048, nil, 0, 0); r.MaxBatchFiles != 8 || r.MaxBatchBytes != 80_000 {
+		t.Fatalf("reasoning defaults changed: %d/%d", r.MaxBatchFiles, r.MaxBatchBytes)
+	}
+	if r := NewWithLimits(nil, "m", 2048, nil, 12, 100_000); r.MaxBatchFiles != 12 || r.MaxBatchBytes != 100_000 {
+		t.Fatalf("explicit limits must override reasoning defaults: %d/%d", r.MaxBatchFiles, r.MaxBatchBytes)
+	}
+}
+
+func TestBatchFilesHonorsByteLimit(t *testing.T) {
+	files := []FileContent{
+		{Path: "a.go", Content: "12345"},
+		{Path: "b.go", Content: "12345"},
+		{Path: "c.go", Content: "1"},
+	}
+	batches := batchFiles(files, 10, 10)
+	if len(batches) != 2 || len(batches[0]) != 2 || len(batches[1]) != 1 {
+		t.Fatalf("unexpected batches: %+v", batches)
+	}
+}
+
 func TestReviewBatchesAndRecordsFailures(t *testing.T) {
 	call := 0
 	fake := &provider.Fake{Fn: func(provider.Request) (string, error) {

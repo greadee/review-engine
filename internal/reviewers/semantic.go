@@ -38,8 +38,16 @@ type Semantic struct {
 	SupportsJSONFormat *bool
 }
 
-// New builds a semantic reviewer.
+// New builds a semantic reviewer with automatic batching limits.
 func New(p provider.Provider, model string, maxReasoningTokens int, supportsJSONFormat *bool) *Semantic {
+	return NewWithLimits(p, model, maxReasoningTokens, supportsJSONFormat, 0, 0)
+}
+
+// NewWithLimits builds a semantic reviewer with explicit batching limits. A
+// non-positive batchFiles or batchBytes keeps the automatic default for the
+// model: 25 files / 150000 bytes, or 8 files / 80000 bytes when reasoning
+// tokens are configured.
+func NewWithLimits(p provider.Provider, model string, maxReasoningTokens int, supportsJSONFormat *bool, batchFiles, batchBytes int) *Semantic {
 	// Base budget of 8192 tokens is enough for non-reasoning models.
 	// When reasoning tokens are configured, add them to the budget so the
 	// model has room for reasoning + JSON output.
@@ -54,6 +62,12 @@ func New(p provider.Provider, model string, maxReasoningTokens int, supportsJSON
 	if maxReasoningTokens > 0 {
 		maxBatchFiles = 8
 		maxBatchBytes = 80_000
+	}
+	if batchFiles > 0 {
+		maxBatchFiles = batchFiles
+	}
+	if batchBytes > 0 {
+		maxBatchBytes = batchBytes
 	}
 	return &Semantic{Provider: p, Model: model, MaxTokens: maxTokens, MaxBatchFiles: maxBatchFiles, MaxBatchBytes: maxBatchBytes, MaxReasoningTokens: maxReasoningTokens, SupportsJSONFormat: supportsJSONFormat}
 }

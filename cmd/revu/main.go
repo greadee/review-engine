@@ -331,35 +331,53 @@ func resolveCI(c *commonFlags) ci.Info {
 }
 
 // newStore selects the tracking backend from configuration.
-func newStore(cfg config.Config, stateDir string, pr int) (store.Store, func() error, error) {
+func newStore(cfg config.Config, stateDir string, pr int, profile string) (store.Store, func() error, error) {
 	dbPath := cfg.Store.SQLitePath(stateDir)
 	if cfg.Store.SQLite && pr > 0 && strings.TrimSpace(cfg.Store.Path) != "" {
-		dbPath = scopedSQLitePath(cfg.Store.Path, pr)
+		dbPath = scopedSQLitePath(cfg.Store.Path, pr, profile)
 	}
 	return store.Open(cfg.Store.SQLite, stateDir, dbPath)
 }
 
-// scopedStateDir keeps lifecycle state per pull request. A shared state file
-// lets one PR mark another PR's findings resolved.
-func scopedStateDir(base string, pr int) string {
+// scopedStateDir keeps lifecycle state per pull request and profile. A shared
+// state file lets one PR or profile mark another's findings resolved.
+func scopedStateDir(base string, pr int, profile string) string {
 	if pr <= 0 {
 		return base
 	}
-	return filepath.Join(base, fmt.Sprintf("pr-%d", pr))
+	if profile == "" {
+		profile = "default"
+	}
+	return filepath.Join(base, fmt.Sprintf("pr-%d", pr), profile)
 }
 
-// scopedSQLitePath applies the same per-PR isolation when the consumer pins an
-// explicit SQLite file instead of using the state directory default.
-func scopedSQLitePath(path string, pr int) string {
+// scopedSQLitePath applies the same per-PR/profile isolation when the consumer
+// pins an explicit SQLite file instead of using the state directory default.
+func scopedSQLitePath(path string, pr int, profile string) string {
 	path = strings.TrimSpace(path)
 	if pr <= 0 || path == "" || path == ":memory:" {
 		return path
 	}
+	if profile == "" {
+		profile = "default"
+	}
 	ext := filepath.Ext(path)
 	if ext == "" {
-		return fmt.Sprintf("%s.pr-%d", path, pr)
+		return fmt.Sprintf("%s.pr-%d.%s", path, pr, profile)
 	}
-	return fmt.Sprintf("%s.pr-%d%s", strings.TrimSuffix(path, ext), pr, ext)
+	return fmt.Sprintf("%s.pr-%d.%s%s", strings.TrimSuffix(path, ext), pr, profile, ext)
+}
+
+// stateScope makes the command-line PR authoritative over artifact data. A
+// mismatch is rejected rather than selecting an attacker-controlled state key.
+func stateScope(flagPR, bundlePR int) (int, error) {
+	if flagPR > 0 && bundlePR > 0 && flagPR != bundlePR {
+		return 0, fmt.Errorf("bundle pull request #%d does not match --pr #%d", bundlePR, flagPR)
+	}
+	if flagPR > 0 {
+		return flagPR, nil
+	}
+	return bundlePR, nil
 }
 
 // projectName derives the local project folder name: the repository name when
@@ -480,7 +498,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	reviewer := reviewers.New(prov, cfg.Provider.Model, cfg.Provider.MaxReasoningTokens, cfg.Provider.SupportsJSONFormat)
+	reviewer := reviewers.NewWithLimits(prov, cfg.Provider.Model, cfg.Provider.MaxReasoningTokens, cfg.Provider.SupportsJSONFormat, cfg.Review.MaxBatchFiles, cfg.Review.MaxBatchBytes)
 
 	// Local mode stores tracking state under the project folder and never
 	// touches GitHub.
@@ -489,12 +507,12 @@ func run(args []string) error {
 	if cfg.Local.Enabled {
 		effectiveStateDir = filepath.Join(cfg.Local.Dir, project)
 	}
-	effectiveStateDir = scopedStateDir(effectiveStateDir, c.pr)
+	effectiveStateDir = scopedStateDir(effectiveStateDir, c.pr, c.profile)
 	var st store.Store
 	if cfg.Mode == config.ModeStateless || strings.EqualFold(strings.TrimSpace(cfg.Persist.Mode), "never") || *dryRun {
 		st = store.Stateless{}
 	} else {
-		opened, closeStore, err := newStore(cfg, effectiveStateDir, c.pr)
+		opened, closeStore, err := newStore(cfg, effectiveStateDir, c.pr, c.profile)
 		if err != nil {
 			return err
 		}
@@ -769,15 +787,15 @@ func finalizeCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	stateScope := b.PR
-	if stateScope == 0 {
-		stateScope = c.pr
+	scopePR, err := stateScope(c.pr, b.PR)
+	if err != nil {
+		return err
 	}
 	var st store.Store
 	if cfg.Mode == config.ModeStateless || *dryRun {
 		st = store.Stateless{}
 	} else {
-		opened, closeStore, err := newStore(cfg, scopedStateDir(*stateDir, stateScope), stateScope)
+		opened, closeStore, err := newStore(cfg, scopedStateDir(*stateDir, scopePR, b.Profile), scopePR, b.Profile)
 		if err != nil {
 			return err
 		}
@@ -787,7 +805,7 @@ func finalizeCmd(args []string) error {
 	eng := engine.New(engine.Options{
 		Config:        cfg,
 		Provider:      prov,
-		Reviewer:      reviewers.New(prov, cfg.Provider.Model, cfg.Provider.MaxReasoningTokens, cfg.Provider.SupportsJSONFormat),
+		Reviewer:      reviewers.NewWithLimits(prov, cfg.Provider.Model, cfg.Provider.MaxReasoningTokens, cfg.Provider.SupportsJSONFormat, cfg.Review.MaxBatchFiles, cfg.Review.MaxBatchBytes),
 		Store:         st,
 		ScopeVerifier: verifier,
 		ArchiveGuard:  guard,
@@ -887,7 +905,7 @@ func issueReview(args []string) error {
 	if cfg.Mode == config.ModeStateless {
 		st = store.Stateless{}
 	} else {
-		opened, closeStore, err := newStore(cfg, *stateDir, 0)
+		opened, closeStore, err := newStore(cfg, *stateDir, 0, "")
 		if err != nil {
 			return err
 		}

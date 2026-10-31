@@ -3,6 +3,25 @@
 All notable changes to this project are recorded here. Release titles use the
 animal-rank nickname; the release purpose is the theme of the release notes.
 
+## [Unreleased]
+
+**1.3 Narwhal** — Correctness & Security (in progress).
+
+#### Added
+
+- Configurable semantic request batching through `review.maxBatchFiles` and
+  `review.maxBatchBytes`, with per-profile overrides, `max-batch-files` /
+  `max-batch-bytes` action inputs, and `REVIEW_MAX_BATCH_FILES` /
+  `REVIEW_MAX_BATCH_BYTES` environment overrides. Zero keeps the automatic
+  defaults, including the smaller reasoning-model budget.
+
+#### Changed
+
+- Pull-request review scope is computed from the merge base, so a base branch
+  that advances after branching no longer adds reverse changes to the review.
+- Lifecycle state is scoped per pull request and profile, and the example
+  workflows cache it across runs.
+
 ## [1.2.0] - 2026-10-27
 
 **Common Chimpanzee** — Restore.

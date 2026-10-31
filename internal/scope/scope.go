@@ -20,11 +20,11 @@ type Scope struct {
 	Files []string
 }
 
-// ChangesForProfile chooses the trusted diff for a profile. Pull-request-style
-// profiles use the merge base so a moved base branch does not add reverse
-// changes; whole-repo and commit-range profiles use the direct two-dot diff.
+// ChangesForProfile chooses the trusted diff for a profile. The PR profile uses
+// the merge base so a moved base branch does not add reverse changes. Impact,
+// sprint, and whole-repo profiles use the direct two-dot diff they document.
 func ChangesForProfile(repo *vcs.Repo, profile, base, head string) ([]vcs.Change, error) {
-	if profile == profiles.PR || profile == profiles.Impact {
+	if profile == profiles.PR {
 		return repo.ChangesFromMergeBase(base, head)
 	}
 	return repo.Changes(base, head)

@@ -53,6 +53,12 @@ on:
       block:
         type: string
         default: "true"
+      max-batch-files:
+        type: string
+        default: ""
+      max-batch-bytes:
+        type: string
+        default: ""
     secrets:
       provider-api-key:
         required: false
@@ -86,6 +92,9 @@ jobs:
     name: finalize (secrets)
     needs: collect
     runs-on: ubuntu-latest
+    concurrency:
+      group: revu-finalize-${{ github.repository }}-${{ inputs.pr }}-${{ inputs.profile }}
+      cancel-in-progress: false
     permissions:
       contents: write
       pull-requests: write
@@ -97,9 +106,9 @@ jobs:
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .review-state
-          key: revu-state-${{ github.repository }}-pr-${{ inputs.pr }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: revu-state-${{ github.repository }}-pr-${{ inputs.pr }}-${{ inputs.profile }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            revu-state-${{ github.repository }}-pr-${{ inputs.pr }}-
+            revu-state-${{ github.repository }}-pr-${{ inputs.pr }}-${{ inputs.profile }}-
       - uses: greadee/review-engine@7de258fcb3c50467bdc87f89443af800527f706a
         with:
           phase: finalize
@@ -110,6 +119,8 @@ jobs:
           publish: ${{ inputs.publish }}
           comment: ${{ inputs.comment }}
           block: ${{ inputs.block }}
+          max-batch-files: ${{ inputs.max-batch-files }}
+          max-batch-bytes: ${{ inputs.max-batch-bytes }}
           expect-repository: ${{ inputs.repository }}
           expect-pr: ${{ inputs.pr }}
           expect-head: ${{ github.sha }}

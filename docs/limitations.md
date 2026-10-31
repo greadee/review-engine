@@ -52,6 +52,7 @@ issues.
   by earlier append-per-run releases; clean those up once manually if needed.
 
 - **CI tracking cache is best-effort.** The example workflows cache
-  `.review-state` per pull request, scoped under `.review-state/pr-<number>`. A
+  `.review-state` per pull request and profile, scoped under
+  `.review-state/pr-<number>/<profile>`. A
   cold or evicted cache starts a fresh lifecycle; it does not corrupt an existing
   PR's findings.

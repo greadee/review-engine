@@ -304,11 +304,12 @@ func TestCommittedAndStarterConfigsLoad(t *testing.T) {
 }
 
 func TestScopedStateDir(t *testing.T) {
-	if got := scopedStateDir(".review-state", 0); got != ".review-state" {
+	if got := scopedStateDir(".review-state", 0, "pr"); got != ".review-state" {
 		t.Fatalf("no-PR scope = %q", got)
 	}
-	if got := scopedStateDir(".review-state", 42); got != filepath.Join(".review-state", "pr-42") {
-		t.Fatalf("PR scope = %q", got)
+	want := filepath.Join(".review-state", "pr-42", "impact")
+	if got := scopedStateDir(".review-state", 42, "impact"); got != want {
+		t.Fatalf("PR/profile scope = %q, want %q", got, want)
 	}
 }
 
@@ -351,13 +352,25 @@ func TestLocalScopeUsesMergeBase(t *testing.T) {
 }
 
 func TestScopedSQLitePath(t *testing.T) {
-	if got := scopedSQLitePath("/tmp/review.db", 42); got != "/tmp/review.pr-42.db" {
+	if got := scopedSQLitePath("/tmp/review.db", 42, "pr"); got != "/tmp/review.pr-42.pr.db" {
 		t.Fatalf("db scope = %q", got)
 	}
-	if got := scopedSQLitePath("/tmp/review", 42); got != "/tmp/review.pr-42" {
+	if got := scopedSQLitePath("/tmp/review", 42, "pr"); got != "/tmp/review.pr-42.pr" {
 		t.Fatalf("extensionless db scope = %q", got)
 	}
-	if got := scopedSQLitePath(":memory:", 42); got != ":memory:" {
+	if got := scopedSQLitePath(":memory:", 42, "pr"); got != ":memory:" {
 		t.Fatalf("memory db scope = %q", got)
+	}
+}
+
+func TestStateScopeRejectsMismatchedPR(t *testing.T) {
+	if got, err := stateScope(42, 0); err != nil || got != 42 {
+		t.Fatalf("flag-only scope = %d, %v", got, err)
+	}
+	if got, err := stateScope(0, 42); err != nil || got != 42 {
+		t.Fatalf("bundle-only scope = %d, %v", got, err)
+	}
+	if _, err := stateScope(42, 99); err == nil {
+		t.Fatal("mismatched PR must be rejected")
 	}
 }
