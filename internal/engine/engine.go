@@ -18,6 +18,7 @@ import (
 	"github.com/greadee/review-engine/internal/config"
 	"github.com/greadee/review-engine/internal/detectors"
 	"github.com/greadee/review-engine/internal/findings"
+	"github.com/greadee/review-engine/internal/issues"
 	"github.com/greadee/review-engine/internal/provider"
 	"github.com/greadee/review-engine/internal/report"
 	"github.com/greadee/review-engine/internal/reviewers"
@@ -53,6 +54,9 @@ type Options struct {
 	// PR is the pull request number, recorded in the bundle so the finalize
 	// phase can bind the artifact to the trusted event.
 	PR int
+	// IssueResolver validates PR/issue/commit references cited by issue
+	// acceptance criteria. When nil, references are not independently checked.
+	IssueResolver issues.RefResolver
 }
 
 // Engine runs profiles over a repository.

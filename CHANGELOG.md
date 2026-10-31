@@ -26,6 +26,10 @@ animal-rank nickname; the release purpose is the theme of the release notes.
 
 - Repository text containing fake file boundaries is kept inside its original
   file block instead of being parsed as a new file.
+- Issue acceptance evidence now resolves PRs, issues, and commits through the
+  GitHub API, checks merged/closed state and touched areas, and rejects
+  hex-looking words that are not real commits. Evidence remains reviewable, not
+  proof.
 
 #### Changed
 

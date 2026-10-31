@@ -80,9 +80,17 @@ cites independently checkable evidence:
 
 - a repository path that exists (a linked test or reviewed change), e.g.
   `` `internal/auth/login_test.go` ``;
-- a PR/issue/commit reference (`#123` or a commit SHA); or
+- a PR/issue/commit reference (`#123` or a commit SHA) that resolves through
+  the GitHub API in this repository, is merged (PRs) or closed (issues), and
+  touches the issue's `Areas`; or
 - an explicit `(verified)` / `(approved)` reviewer marker, or the issue carrying
   the configured `issueReview.verifiedLabel`.
+
+Reference validation records why each reference did or did not count. A
+reference is evidence, not proof: the API can show that a PR/commit exists,
+merged, and touched the relevant area, but it cannot prove that the change
+actually satisfies the criterion. A human reviewer remains responsible for that
+judgment.
 
 Consequences:
 

@@ -14,6 +14,7 @@ import (
 
 	"github.com/greadee/review-engine/internal/bundle"
 	"github.com/greadee/review-engine/internal/config"
+	"github.com/greadee/review-engine/internal/issues"
 	"github.com/greadee/review-engine/internal/provider"
 	"github.com/greadee/review-engine/internal/vcs"
 )
@@ -372,5 +373,67 @@ func TestStateScopeRejectsMismatchedPR(t *testing.T) {
 	}
 	if _, err := stateScope(42, 99); err == nil {
 		t.Fatal("mismatched PR must be rejected")
+	}
+}
+
+func TestIssueEvidenceResolver(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/o/r/issues/12":
+			io.WriteString(w, `{"number":12,"state":"closed","pull_request":{"url":"https://api.github.com/repos/o/r/pulls/12"}}`)
+		case "/repos/o/r/pulls/12":
+			io.WriteString(w, `{"number":12,"state":"closed","merged_at":"2026-10-01T00:00:00Z"}`)
+		case "/repos/o/r/pulls/12/files":
+			io.WriteString(w, `[{"filename":"internal/auth/login.go","status":"modified"}]`)
+		case "/repos/o/r/issues/13":
+			io.WriteString(w, "{\"number\":13,\"state\":\"closed\",\"body\":\"Work in `internal/auth`.\"}")
+		case "/repos/o/r/issues/14":
+			io.WriteString(w, `{"number":14,"state":"open"}`)
+		case "/repos/o/r/issues/15":
+			io.WriteString(w, `{"number":15,"state":"closed","pull_request":{"url":"https://api.github.com/repos/o/r/pulls/15"}}`)
+		case "/repos/o/r/pulls/15":
+			io.WriteString(w, `{"number":15,"state":"closed","merged_at":"2026-10-01T00:00:00Z"}`)
+		case "/repos/o/r/pulls/15/files":
+			io.WriteString(w, `[{"filename":"other/thing.go","status":"modified"}]`)
+		case "/repos/o/r/issues/16":
+			io.WriteString(w, `{"number":16,"state":"open","pull_request":{"url":"https://api.github.com/repos/o/r/pulls/16"}}`)
+		case "/repos/o/r/pulls/16":
+			io.WriteString(w, `{"number":16,"state":"open","merged_at":null}`)
+		case "/repos/o/r/commits/abcdef1":
+			io.WriteString(w, `{"sha":"abcdef1","files":[{"filename":"internal/auth/login.go"}]}`)
+		case "/repos/o/r/commits/1234567":
+			io.WriteString(w, `{"sha":"1234567","files":[{"filename":"other/thing.go"}]}`)
+		case "/repos/o/r/commits/deadbeef":
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	gh := vcs.NewGitHub("token")
+	gh.BaseURL = srv.URL
+	resolver := issueEvidenceResolver(gh, "o", "r")
+	areas := []string{"internal/auth"}
+	cases := []struct {
+		ref    issues.EvidenceRef
+		wantOK bool
+		want   string
+	}{
+		{issues.EvidenceRef{Kind: issues.EvRef, Value: "#12"}, true, "merged"},
+		{issues.EvidenceRef{Kind: issues.EvRef, Value: "#13"}, true, "closed"},
+		{issues.EvidenceRef{Kind: issues.EvRef, Value: "#14"}, false, "not closed"},
+		{issues.EvidenceRef{Kind: issues.EvRef, Value: "#15"}, false, "does not touch"},
+		{issues.EvidenceRef{Kind: issues.EvRef, Value: "#16"}, false, "not merged"},
+		{issues.EvidenceRef{Kind: issues.EvRef, Value: "abcdef1"}, true, "exists"},
+		{issues.EvidenceRef{Kind: issues.EvRef, Value: "1234567"}, false, "does not touch"},
+		{issues.EvidenceRef{Kind: issues.EvRef, Value: "deadbeef"}, false, "does not resolve"},
+	}
+	for _, tc := range cases {
+		ok, reason := resolver(context.Background(), tc.ref, areas)
+		if ok != tc.wantOK || !strings.Contains(reason, tc.want) {
+			t.Errorf("%s: got (%v, %q), want (%v, reason containing %q)", tc.ref.Value, ok, reason, tc.wantOK, tc.want)
+		}
 	}
 }

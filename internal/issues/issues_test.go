@@ -1,6 +1,7 @@
 package issues
 
 import (
+	"context"
 	"testing"
 
 	"github.com/greadee/review-engine/internal/findings"
@@ -189,5 +190,77 @@ func TestFindingsNoCriteria(t *testing.T) {
 	got := FindingsWith(vcs.Issue{Number: 1, State: "closed", Body: "no list here"}, nil)
 	if len(got) != 1 || got[0].Anchor != "no-criteria" || got[0].Severity != findings.P3 {
 		t.Fatalf("expected a single P3 no-criteria finding, got %+v", got)
+	}
+}
+
+func TestResolverRejectsUnmergedReference(t *testing.T) {
+	body := "## Acceptance criteria\n\n- [x] delivered #12\n- [x] delivered #13\n"
+	resolver := func(_ context.Context, ref EvidenceRef, _ []string) (bool, string) {
+		if ref.Value == "#12" {
+			return false, "PR #12 is not merged"
+		}
+		return true, "PR #13 is merged"
+	}
+	v := EvaluateWithOptions(vcs.Issue{Number: 1, State: "open", Body: body}, nil, Options{Resolver: resolver})
+	if v.Verified != 1 || v.Unmet != 1 {
+		t.Fatalf("unexpected verdict: %+v", v)
+	}
+	var reason string
+	for _, c := range v.Details {
+		for _, check := range c.Checks {
+			if check.Ref.Value == "#12" {
+				reason = check.Reason
+			}
+		}
+	}
+	if reason != "PR #12 is not merged" {
+		t.Fatalf("missing rejection reason, got %q", reason)
+	}
+}
+
+func TestHexLookingWordMustResolveAsCommit(t *testing.T) {
+	body := "## Acceptance criteria\n\n- [x] shipped in deadbeef\n"
+	resolver := func(_ context.Context, ref EvidenceRef, _ []string) (bool, string) {
+		if ref.Value == "deadbeef" {
+			return false, "commit deadbeef does not resolve"
+		}
+		return false, "unexpected reference"
+	}
+	v := EvaluateWithOptions(vcs.Issue{Number: 1, State: "open", Body: body}, nil, Options{Resolver: resolver})
+	if v.Verified != 0 || v.Unmet != 1 {
+		t.Fatalf("hex-looking word must not verify: %+v", v)
+	}
+	if len(v.Details) != 1 || len(v.Details[0].Checks) != 1 {
+		t.Fatalf("missing evidence check: %+v", v.Details)
+	}
+	if v.Details[0].Checks[0].Reason != "commit deadbeef does not resolve" {
+		t.Fatalf("unexpected reason: %+v", v.Details[0].Checks[0])
+	}
+}
+
+func TestResolverReceivesIssueAreas(t *testing.T) {
+	body := "## Acceptance criteria\n\n- [x] shipped #12 in `internal/auth`\n"
+	var gotAreas []string
+	resolver := func(_ context.Context, _ EvidenceRef, areas []string) (bool, string) {
+		gotAreas = append([]string(nil), areas...)
+		return true, "PR #12 is merged"
+	}
+	v := EvaluateWithOptions(vcs.Issue{Number: 1, State: "open", Body: body}, nil, Options{Resolver: resolver})
+	if !v.GoodToGo() {
+		t.Fatalf("expected verified evidence: %+v", v)
+	}
+	if len(gotAreas) != 1 || gotAreas[0] != "internal/auth" {
+		t.Fatalf("resolver areas = %v, want internal/auth", gotAreas)
+	}
+}
+
+func TestFindingsWithOptionsUsesResolver(t *testing.T) {
+	body := "## Acceptance criteria\n\n- [x] shipped #12\n"
+	resolver := func(_ context.Context, _ EvidenceRef, _ []string) (bool, string) {
+		return false, "PR #12 is not merged"
+	}
+	got := FindingsWithOptions(context.Background(), vcs.Issue{Number: 7, State: "closed", Body: body}, nil, Options{Resolver: resolver})
+	if len(got) != 1 || got[0].Severity != findings.P2 {
+		t.Fatalf("expected one P2 unverified finding, got %+v", got)
 	}
 }

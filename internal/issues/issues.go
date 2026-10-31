@@ -4,6 +4,7 @@
 package issues
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -37,7 +38,21 @@ type Criterion struct {
 	Text     string
 	Done     bool
 	Evidence []EvidenceRef
+	// Checks records why each reference did or did not count.
+	Checks []EvidenceCheck
 }
+
+// EvidenceCheck is one resolved evidence reference.
+type EvidenceCheck struct {
+	Ref    EvidenceRef
+	OK     bool
+	Reason string
+}
+
+// RefResolver validates a PR/issue/commit reference against its source. The
+// areas are the module/directory prefixes the issue relates to; a resolver must
+// reject evidence that does not touch them.
+type RefResolver func(ctx context.Context, ref EvidenceRef, areas []string) (bool, string)
 
 // Verified reports whether the criterion carries independently checkable
 // evidence. A repository path must resolve through read; a PR/issue/commit
@@ -213,6 +228,8 @@ type Verdict struct {
 	HasCriteria bool
 	// Approved records an explicit reviewer approval (a configured label).
 	Approved bool
+	// Details retains each criterion with its evidence checks.
+	Details []Criterion
 }
 
 // GoodToGo reports whether the issue may be closed: it must have criteria and
@@ -226,6 +243,9 @@ func (v Verdict) GoodToGo() bool {
 type Options struct {
 	// Approved marks the issue as explicitly approved by a reviewer.
 	Approved bool
+	// Resolver validates PR/issue/commit references. When nil, references are
+	// accepted for backwards compatibility with local, offline evaluation.
+	Resolver RefResolver
 }
 
 // EvaluateWith computes the verdict from the issue body and any referenced
@@ -236,33 +256,111 @@ func EvaluateWith(issue vcs.Issue, read DocReader) Verdict {
 
 // EvaluateWithOptions computes the verdict with evaluation options.
 func EvaluateWithOptions(issue vcs.Issue, read DocReader, opts Options) Verdict {
+	return EvaluateContext(context.Background(), issue, read, opts)
+}
+
+// EvaluateContext computes the verdict with evaluation options and a context
+// for resolver-backed references.
+func EvaluateContext(ctx context.Context, issue vcs.Issue, read DocReader, opts Options) Verdict {
 	criteria := CollectCriteria(issue.Body, read)
+	areas := Areas(issue, read)
 	v := Verdict{Criteria: len(criteria), HasCriteria: len(criteria) > 0, Approved: opts.Approved}
-	for _, c := range criteria {
-		if c.Done {
+	for i := range criteria {
+		criteria[i].Checks = CheckEvidence(ctx, criteria[i], read, areas, opts.Resolver)
+		if criteria[i].Done {
 			v.Checked++
 		}
-		if c.Verified(read) {
+		if checksVerified(criteria[i].Checks) {
 			v.Verified++
 		} else {
 			v.Unmet++
-			if c.Done {
+			if criteria[i].Done {
 				v.Unverified++
 			}
 		}
 	}
+	v.Details = criteria
 	return v
 }
 
 // Unmet returns the criteria that are not independently verified.
 func Unmet(issue vcs.Issue, read DocReader) []Criterion {
+	return UnmetWithOptions(context.Background(), issue, read, Options{})
+}
+
+// UnmetWithOptions returns the unverified criteria with resolver-backed checks.
+func UnmetWithOptions(ctx context.Context, issue vcs.Issue, read DocReader, opts Options) []Criterion {
+	v := EvaluateContext(ctx, issue, read, opts)
 	var out []Criterion
-	for _, c := range CollectCriteria(issue.Body, read) {
-		if !c.Verified(read) {
+	for _, c := range v.Details {
+		if !checksVerified(c.Checks) {
 			out = append(out, c)
 		}
 	}
 	return out
+}
+
+// CheckEvidence resolves each reference and records why it did or did not
+// count. A criterion is verified when at least one reference resolves.
+func CheckEvidence(ctx context.Context, c Criterion, read DocReader, areas []string, resolver RefResolver) []EvidenceCheck {
+	var out []EvidenceCheck
+	for _, e := range c.Evidence {
+		switch e.Kind {
+		case EvPath:
+			if read == nil {
+				out = append(out, EvidenceCheck{Ref: e, Reason: "no repository reader available"})
+				continue
+			}
+			if _, ok := read(e.Value); ok {
+				out = append(out, EvidenceCheck{Ref: e, OK: true, Reason: "referenced path exists"})
+			} else {
+				out = append(out, EvidenceCheck{Ref: e, Reason: "referenced path does not exist"})
+			}
+		case EvApproval:
+			out = append(out, EvidenceCheck{Ref: e, OK: true, Reason: "explicit reviewer approval marker"})
+		case EvRef:
+			if resolver == nil {
+				// Offline callers keep the historical behavior. CI paths pass a
+				// resolver and never accept an unresolved reference.
+				out = append(out, EvidenceCheck{Ref: e, OK: true, Reason: "reference accepted without a resolver"})
+				continue
+			}
+			ok, reason := resolver(ctx, e, areas)
+			out = append(out, EvidenceCheck{Ref: e, OK: ok, Reason: reason})
+		}
+	}
+	return out
+}
+
+func checksVerified(checks []EvidenceCheck) bool {
+	for _, c := range checks {
+		if c.OK {
+			return true
+		}
+	}
+	return false
+}
+
+// FilesTouchAreas reports whether any changed file belongs to one of areas.
+func FilesTouchAreas(files, areas []string) bool {
+	for _, f := range files {
+		if fileInAreas(f, areas) {
+			return true
+		}
+	}
+	return false
+}
+
+// AreasOverlap reports whether two area sets share a prefix relationship.
+func AreasOverlap(a, b []string) bool {
+	for _, left := range a {
+		for _, right := range b {
+			if left == right || strings.HasPrefix(left, right+"/") || strings.HasPrefix(right, left+"/") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 var areaToken = regexp.MustCompile("`([a-zA-Z][\\w./-]*/[\\w./-]+)`")
@@ -346,7 +444,13 @@ func fileInAreas(file string, areas []string) bool {
 // that are not even checked are P1/P3 accordingly. A nil reader restricts
 // evaluation to the issue body.
 func FindingsWith(issue vcs.Issue, read DocReader) []findings.Finding {
-	criteria := CollectCriteria(issue.Body, read)
+	return FindingsWithOptions(context.Background(), issue, read, Options{})
+}
+
+// FindingsWithOptions is FindingsWith with resolver-backed evidence.
+func FindingsWithOptions(ctx context.Context, issue vcs.Issue, read DocReader, opts Options) []findings.Finding {
+	verdict := EvaluateContext(ctx, issue, read, opts)
+	criteria := verdict.Details
 	var out []findings.Finding
 	if len(criteria) == 0 {
 		out = append(out, findings.Finding{
@@ -363,7 +467,7 @@ func FindingsWith(issue vcs.Issue, read DocReader) []findings.Finding {
 	}
 	closed := strings.EqualFold(issue.State, "closed")
 	for _, c := range criteria {
-		if c.Verified(read) {
+		if checksVerified(c.Checks) {
 			continue
 		}
 		sev := findings.P3

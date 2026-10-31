@@ -13,12 +13,13 @@ issues.
   revisions must match. Pin both to the same commit when using the two-phase
   flow (the examples already do).
 
-- **Criterion evidence is author-supplied.** In `internal/issues`, a criterion is
-  "verified" when it cites a repository path that exists, a `#PR`/commit
-  reference, or an explicit `(verified)`/approval marker. These references are
-  reviewable but not independently validated, and the reference pattern
-  (`[0-9a-f]{7,40}`) can match a hex-looking word. Treat issue verification as a
-  prompt for a human, not proof.
+- **Criterion evidence remains reviewable, not proof.** In CI, the issue
+  profile resolves `#PR`/issue/commit references through the GitHub API, checks
+  that PRs are merged and issues are closed, and requires the referenced work to
+  touch the issue's areas. A repository path is still checked by existence, and
+  a hex-looking word is rejected unless it resolves as a commit. The API cannot
+  prove that a change semantically satisfies the criterion, so a human reviewer
+  remains responsible for the final judgment.
 
 - **`issues.EvaluateWith`** is currently referenced only by tests (the engine's
   own orphan detector flags it, P2). It is retained as public API.

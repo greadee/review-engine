@@ -931,7 +931,8 @@ func issueReview(args []string) error {
 			return string(data), true
 		}
 	}
-	eng := engine.New(engine.Options{Config: cfg, Repo: repo, Store: st})
+	resolver := issueEvidenceResolver(gh, owner, name)
+	eng := engine.New(engine.Options{Config: cfg, Repo: repo, Store: st, IssueResolver: resolver})
 	res, err := eng.RunIssue(ctx, issue)
 	if err != nil {
 		return err
@@ -946,7 +947,7 @@ func issueReview(args []string) error {
 	}
 
 	approved := cfg.IssueReview.VerifiedLabel != "" && hasLabel(issue.Labels, cfg.IssueReview.VerifiedLabel)
-	verdict := issues.EvaluateWithOptions(issue, reader, issues.Options{Approved: approved})
+	verdict := issues.EvaluateWithOptions(issue, reader, issues.Options{Approved: approved, Resolver: resolver})
 	closed := strings.EqualFold(issue.State, "closed")
 	if *comment {
 		marker := fmt.Sprintf("<!-- revu:issue=%d -->", *issueNum)
@@ -1218,6 +1219,7 @@ func reconcile(args []string) error {
 
 	ctx := context.Background()
 	gh := vcs.NewGitHub("")
+	resolver := issueEvidenceResolver(gh, owner, name)
 
 	var allFindings []findings.Finding
 	if *findingsPath != "" {
@@ -1239,7 +1241,7 @@ func reconcile(args []string) error {
 			return fmt.Errorf("issue #%d: %w", n, err)
 		}
 		approved := cfg.IssueReview.VerifiedLabel != "" && hasLabel(issue.Labels, cfg.IssueReview.VerifiedLabel)
-		verdict := issues.EvaluateWithOptions(issue, reader, issues.Options{Approved: approved})
+		verdict := issues.EvaluateWithOptions(issue, reader, issues.Options{Approved: approved, Resolver: resolver})
 		isClosed := strings.EqualFold(issue.State, "closed")
 
 		// A findings-gated issue stays open when the review found problems in
@@ -1288,7 +1290,7 @@ func reconcile(args []string) error {
 			fmt.Printf("#%d kept open (%s)\n", n, reason)
 			openN++
 			if *comment && !*dryRun {
-				body := reconcileComment(issue, verdict, reader)
+				body := reconcileComment(issue, verdict)
 				if err := gh.UpsertComment(ctx, owner, name, n, fmt.Sprintf("<!-- revu:reconcile=issue-%d -->", n), body); err != nil {
 					return err
 				}
@@ -1304,7 +1306,7 @@ func reconcile(args []string) error {
 	return nil
 }
 
-func reconcileComment(issue vcs.Issue, v issues.Verdict, read issues.DocReader) string {
+func reconcileComment(issue vcs.Issue, v issues.Verdict) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "**Review update** for #%d\n\n", issue.Number)
 	if !v.HasCriteria {
@@ -1312,7 +1314,19 @@ func reconcileComment(issue vcs.Issue, v issues.Verdict, read issues.DocReader) 
 		return b.String()
 	}
 	fmt.Fprintf(&b, "Acceptance criteria: %d/%d verified.\n\n", v.Verified, v.Criteria)
-	unmet := issues.Unmet(issue, read)
+	var unmet []issues.Criterion
+	for _, c := range v.Details {
+		verified := false
+		for _, check := range c.Checks {
+			if check.OK {
+				verified = true
+				break
+			}
+		}
+		if !verified {
+			unmet = append(unmet, c)
+		}
+	}
 	if len(unmet) > 0 {
 		b.WriteString("Outstanding (no verified evidence):\n")
 		for _, c := range unmet {
@@ -1321,6 +1335,11 @@ func reconcileComment(issue vcs.Issue, v issues.Verdict, read issues.DocReader) 
 				box = "x"
 			}
 			fmt.Fprintf(&b, "- [%s] %s\n", box, c.Text)
+			for _, check := range c.Checks {
+				if !check.OK && check.Reason != "" {
+					fmt.Fprintf(&b, "  - `%s`: %s\n", check.Ref.Value, check.Reason)
+				}
+			}
 		}
 	}
 	b.WriteString("\n_Automated by review-engine._\n")
@@ -1345,6 +1364,116 @@ func relatedFindingsComment(issue vcs.Issue, related []findings.Finding) string 
 	}
 	b.WriteString("\n_Automated by review-engine._\n")
 	return b.String()
+}
+
+// issueEvidenceResolver validates PR/issue/commit references used as issue
+// acceptance evidence. It resolves references through the GitHub API, checks
+// merged/closed state, and requires referenced work to touch the issue's areas.
+func issueEvidenceResolver(gh *vcs.GitHub, owner, repo string) issues.RefResolver {
+	return func(ctx context.Context, ref issues.EvidenceRef, areas []string) (bool, string) {
+		switch ref.Kind {
+		case issues.EvApproval:
+			return true, "explicit reviewer approval marker"
+		case issues.EvPath:
+			return false, "path evidence is checked against the working tree"
+		case issues.EvRef:
+			value := strings.TrimSpace(ref.Value)
+			if strings.HasPrefix(value, "#") {
+				n, err := strconv.Atoi(strings.TrimPrefix(value, "#"))
+				if err != nil {
+					return false, fmt.Sprintf("invalid issue/PR reference %q", value)
+				}
+				return resolveIssueOrPR(ctx, gh, owner, repo, n, areas)
+			}
+			if !isCommitSHA(value) {
+				return false, fmt.Sprintf("%q is not a PR/issue/commit reference", value)
+			}
+			return resolveCommit(ctx, gh, owner, repo, value, areas)
+		}
+		return false, "unsupported evidence reference"
+	}
+}
+
+func resolveIssueOrPR(ctx context.Context, gh *vcs.GitHub, owner, repo string, number int, areas []string) (bool, string) {
+	issue, err := gh.GetIssue(ctx, owner, repo, number)
+	if err != nil {
+		return false, fmt.Sprintf("#%d does not resolve in %s/%s", number, owner, repo)
+	}
+	if issue.PullRequest != nil {
+		pr, err := gh.PR(ctx, owner, repo, number)
+		if err != nil {
+			return false, fmt.Sprintf("PR #%d does not resolve", number)
+		}
+		if !strings.EqualFold(pr.State, "closed") || (pr.MergedAt == nil && !pr.Merged) {
+			return false, fmt.Sprintf("PR #%d is not merged", number)
+		}
+		files, err := gh.PullRequestFiles(ctx, owner, repo, number)
+		if err != nil {
+			return false, fmt.Sprintf("PR #%d changed files are unavailable", number)
+		}
+		if len(areas) > 0 && !issues.FilesTouchAreas(pullRequestFileNames(files), areas) {
+			return false, fmt.Sprintf("PR #%d does not touch this issue's areas", number)
+		}
+		return true, fmt.Sprintf("PR #%d is merged%s", number, areaNote(areas))
+	}
+	if !strings.EqualFold(issue.State, "closed") {
+		return false, fmt.Sprintf("issue #%d is not closed", number)
+	}
+	refAreas := issues.Areas(issue, nil)
+	if len(areas) > 0 && len(refAreas) > 0 && !issues.AreasOverlap(areas, refAreas) {
+		return false, fmt.Sprintf("issue #%d does not touch this issue's areas", number)
+	}
+	return true, fmt.Sprintf("issue #%d is closed%s", number, areaNote(areas))
+}
+
+func resolveCommit(ctx context.Context, gh *vcs.GitHub, owner, repo, sha string, areas []string) (bool, string) {
+	commit, err := gh.Commit(ctx, owner, repo, sha)
+	if err != nil {
+		return false, fmt.Sprintf("commit %s does not resolve in %s/%s", shortSHA(sha), owner, repo)
+	}
+	files := make([]string, 0, len(commit.Files))
+	for _, f := range commit.Files {
+		files = append(files, f.Filename)
+	}
+	if len(areas) > 0 && !issues.FilesTouchAreas(files, areas) {
+		return false, fmt.Sprintf("commit %s does not touch this issue's areas", shortSHA(commit.SHA))
+	}
+	return true, fmt.Sprintf("commit %s exists%s", shortSHA(commit.SHA), areaNote(areas))
+}
+
+func pullRequestFileNames(files []vcs.PullRequestFile) []string {
+	out := make([]string, 0, len(files))
+	for _, f := range files {
+		out = append(out, f.Filename)
+	}
+	return out
+}
+
+func isCommitSHA(value string) bool {
+	if len(value) < 7 || len(value) > 40 {
+		return false
+	}
+	for _, r := range value {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+func shortSHA(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) > 12 {
+		return value[:12]
+	}
+	return value
+}
+
+func areaNote(areas []string) string {
+	if len(areas) == 0 {
+		return ""
+	}
+	return " and touches " + strings.Join(areas, ", ")
 }
 
 func parseNumbers(s string) ([]int, error) {
