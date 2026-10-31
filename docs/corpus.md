@@ -5,7 +5,7 @@ the PR-review claim. Each fixture is a directory:
 
 ```
 testdata/corpus/<name>/
-  meta.json     # profile, clean/adversarial flags, notes, expected findings
+  meta.json     # profile, clean/adversarial flags, notes, expected findings (file, line, anchor, class, severity)
   base/         # file tree for the base revision
   head/         # file tree for the head revision (the "PR")
 ```
@@ -115,6 +115,11 @@ Common causes of a fully incomplete pinned-model run:
 
 - **Precision** — matched seeded defects / all reported findings.
 - **Recall** — detected / seeded defects, and specifically for P0/P1.
+- **Exact anchor match** — the model emitted the expected anchor slug. The
+  deterministic oracle matches this way.
+- **Semantic match** — a real-model finding cites the expected file within five
+  lines of the seeded line. This is the recall/precision basis for real models,
+  because they cannot know the expected anchor names.
 - **Severity accuracy** — detected defects reported at the seeded severity.
 - **False positives** — findings that do not match an expected anchor, including
   any finding on a clean/adversarial fixture.
@@ -129,6 +134,11 @@ Common causes of a fully incomplete pinned-model run:
 
 - The corpus is synthetic and small. It measures the narrow PR-review claim, not
   real-repository precision or the audit/issue profiles.
+- Real-model runs strip `revu-seed` markers from the checked-out head tree while
+  preserving line numbers, so the model cannot read the expected answer. The
+  deterministic oracle keeps the markers.
+- Reports list expected and actual finding details, including whether a finding
+  matched by exact anchor, file+line, or not at all.
 - Expected findings are anchored by fixture metadata. A finding with a different
   anchor is counted as a false positive.
 - The deterministic oracle is an invariant test, not a model-accuracy result.

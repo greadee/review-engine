@@ -4,6 +4,12 @@
   "adversarial": false,
   "notes": "User input passed to a shell; command injection.",
   "expected": [
-    {"file": "exec.go", "anchor": "command-injection", "classification": "Security", "severity": "P0"}
+    {
+      "file": "exec.go",
+      "anchor": "command-injection",
+      "classification": "Security",
+      "severity": "P0",
+      "line": 6
+    }
   ]
 }

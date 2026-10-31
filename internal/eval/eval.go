@@ -28,9 +28,22 @@ import (
 // findingSpec is one expected finding in a fixture's manifest.
 type findingSpec struct {
 	File           string `json:"file"`
+	Line           int    `json:"line,omitempty"`
 	Anchor         string `json:"anchor"`
 	Classification string `json:"classification"`
 	Severity       string `json:"severity"`
+}
+
+// FindingDetail is one actual model finding, kept for the publishable report.
+type FindingDetail struct {
+	Title          string
+	File           string
+	Line           int
+	Classification string
+	Severity       string
+	Anchor         string
+	Snippet        string
+	MatchKind      string
 }
 
 // Meta is a fixture manifest.
@@ -88,6 +101,7 @@ type FixtureResult struct {
 	P0P1Expected     int
 	Findings         int
 	Detected         int
+	AnchorDetected   int
 	P0P1Detected     int
 	SeverityOK       int
 	FalsePositives   int
@@ -98,6 +112,8 @@ type FixtureResult struct {
 	Latency          time.Duration
 	Usage            provider.Usage
 	Errors           []string
+	ExpectedDetails  []findingSpec
+	Actual           []FindingDetail
 }
 
 // Options records the exact evaluation settings and optional pricing. The
@@ -131,6 +147,7 @@ func (r Report) Counts() Counts {
 	for _, f := range r.Fixtures {
 		c.Expected += f.Expected
 		c.Detected += f.Detected
+		c.AnchorDetected += f.AnchorDetected
 		c.P0P1Expected += f.P0P1Expected
 		c.P0P1Detected += f.P0P1Detected
 		c.SeverityOK += f.SeverityOK
@@ -155,6 +172,7 @@ type Counts struct {
 	Fixtures        int
 	Expected        int
 	Detected        int
+	AnchorDetected  int
 	P0P1Expected    int
 	P0P1Detected    int
 	SeverityOK      int
@@ -217,7 +235,8 @@ func (r Report) Markdown() string {
 	b.WriteString("| Metric | Value |\n|---|---|\n")
 	fmt.Fprintf(&b, "| fixtures | %d |\n", c.Fixtures)
 	fmt.Fprintf(&b, "| seeded defects | %d |\n", c.Expected)
-	fmt.Fprintf(&b, "| detected | %d |\n", c.Detected)
+	fmt.Fprintf(&b, "| detected (semantic match) | %d |\n", c.Detected)
+	fmt.Fprintf(&b, "| detected (exact anchor) | %d |\n", c.AnchorDetected)
 	fmt.Fprintf(&b, "| precision | %.0f%% |\n", c.Precision()*100)
 	fmt.Fprintf(&b, "| recall (all) | %.0f%% |\n", c.Recall()*100)
 	fmt.Fprintf(&b, "| recall (P0/P1) | %.0f%% |\n", c.P0P1Recall()*100)
@@ -249,15 +268,40 @@ func (r Report) Markdown() string {
 		}
 	}
 
-	b.WriteString("\n| fixture | expected | found | detected | verdict | coverage | latency | tokens |\n|---|---|---|---|---|---|---|---|\n")
+	b.WriteString("\n| fixture | expected | found | detected | anchor | verdict | coverage | latency | tokens |\n|---|---|---|---|---|---|---|---|---|\n")
 	for _, f := range r.Fixtures {
 		cov := "complete"
 		if !f.CoverageComplete {
 			cov = "INCOMPLETE"
 		}
-		fmt.Fprintf(&b, "| %s | %d | %d | %d | %s | %s | %s | %d |\n",
-			f.Name, f.Expected, f.Findings, f.Detected, f.Verdict, cov,
+		fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %s | %s | %s | %d |\n",
+			f.Name, f.Expected, f.Findings, f.Detected, f.AnchorDetected, f.Verdict, cov,
 			f.Latency.Round(time.Millisecond), f.Usage.TotalTokens)
+	}
+
+	b.WriteString("\n## Finding details\n")
+	for _, f := range r.Fixtures {
+		if len(f.ExpectedDetails) == 0 && len(f.Actual) == 0 {
+			continue
+		}
+		fmt.Fprintf(&b, "\n### %s\n\n", f.Name)
+		b.WriteString("Expected:\n\n")
+		if len(f.ExpectedDetails) == 0 {
+			b.WriteString("- none\n")
+		} else {
+			for _, e := range f.ExpectedDetails {
+				fmt.Fprintf(&b, "- `%s:%d` %s %s anchor=`%s`\n", e.File, e.Line, e.Classification, e.Severity, e.Anchor)
+			}
+		}
+		b.WriteString("\nActual:\n\n")
+		if len(f.Actual) == 0 {
+			b.WriteString("- none\n")
+		} else {
+			for _, a := range f.Actual {
+				fmt.Fprintf(&b, "- `%s:%d` %s %s anchor=`%s` match=`%s` — %s\n",
+					a.File, a.Line, a.Classification, a.Severity, a.Anchor, a.MatchKind, valueOr(a.Title, "(untitled)"))
+			}
+		}
 	}
 	return b.String()
 }
@@ -314,7 +358,7 @@ func RunWithOptions(ctx context.Context, fixtures []Fixture, prov provider.Provi
 	}
 	for _, fix := range fixtures {
 		recorder := &recordingProvider{inner: prov}
-		res, err := runFixture(ctx, fix, recorder, opts)
+		res, err := runFixture(ctx, fix, recorder, opts, prov.Name() != "oracle")
 		if err != nil {
 			return Report{}, fmt.Errorf("eval: fixture %s: %w", fix.Name, err)
 		}
@@ -359,14 +403,14 @@ func addUsage(dst *provider.Usage, src provider.Usage) {
 	dst.TotalTokens += src.TotalTokens
 }
 
-func runFixture(ctx context.Context, fix Fixture, prov provider.Provider, opts Options) (FixtureResult, error) {
+func runFixture(ctx context.Context, fix Fixture, prov provider.Provider, opts Options, stripMarkers bool) (FixtureResult, error) {
 	dir, err := os.MkdirTemp("", "revu-eval-")
 	if err != nil {
 		return FixtureResult{}, err
 	}
 	defer os.RemoveAll(dir)
 
-	base, head, err := buildRepo(fix, dir)
+	base, head, err := buildRepo(fix, dir, stripMarkers)
 	if err != nil {
 		return FixtureResult{}, err
 	}
@@ -403,45 +447,115 @@ func runFixture(ctx context.Context, fix Fixture, prov provider.Provider, opts O
 		return FixtureResult{}, err
 	}
 
-	expected := map[string]findingSpec{}
-	for _, e := range fix.Meta.Expected {
-		expected[e.Anchor] = e
-	}
+	expected := append([]findingSpec(nil), fix.Meta.Expected...)
 	out := FixtureResult{
 		Name:             fix.Name,
 		Clean:            fix.Meta.Clean,
 		Adversarial:      fix.Meta.Adversarial,
-		Expected:         len(fix.Meta.Expected),
+		Expected:         len(expected),
 		Findings:         len(res.Run.Findings),
 		CoverageComplete: res.Run.Coverage.Complete(),
 		Verdict:          res.Run.Recommendation(),
 		Errors:           append([]string(nil), res.Run.Coverage.Errors...),
+		ExpectedDetails:  expected,
 	}
-	seen := map[string]bool{}
 	for _, f := range res.Run.Findings {
 		if !validEvidence(f, headFiles) {
 			out.InvalidEvidence++
 		}
-		e, ok := expected[f.Anchor]
-		if !ok || seen[f.Anchor] {
-			out.FalsePositives++
-			continue
-		}
-		seen[f.Anchor] = true
+		out.Actual = append(out.Actual, FindingDetail{
+			Title:          f.Title,
+			File:           f.Evidence.File,
+			Line:           f.Evidence.Line,
+			Classification: string(f.Classification),
+			Severity:       string(f.Severity),
+			Anchor:         f.Anchor,
+			Snippet:        f.Evidence.Snippet,
+		})
+	}
+
+	matched := make([]bool, len(expected))
+	matchKind := make([]string, len(res.Run.Findings))
+	markMatched := func(findingIndex, expectedIndex int, kind string) {
+		matched[expectedIndex] = true
+		matchKind[findingIndex] = kind
 		out.Detected++
-		if string(f.Severity) == e.Severity {
+		e := expected[expectedIndex]
+		if string(res.Run.Findings[findingIndex].Severity) == e.Severity {
 			out.SeverityOK++
 		}
 		if e.Severity == "P0" || e.Severity == "P1" {
 			out.P0P1Detected++
 		}
 	}
-	for _, e := range fix.Meta.Expected {
+
+	// Exact anchor matches are unambiguous and are tried first for every model.
+	for i, f := range res.Run.Findings {
+		for j, e := range expected {
+			if matched[j] || e.Anchor == "" || f.Anchor != e.Anchor {
+				continue
+			}
+			markMatched(i, j, "anchor")
+			out.AnchorDetected++
+			break
+		}
+	}
+
+	// Real models do not know the expected anchor names. Match a remaining
+	// finding to an expected defect in the same file near the seeded line.
+	for i, f := range res.Run.Findings {
+		if matchKind[i] != "" {
+			continue
+		}
+		best, bestDistance := -1, 6
+		for j, e := range expected {
+			if matched[j] || !sameFile(f.Evidence.File, e.File) {
+				continue
+			}
+			if e.Line > 0 && f.Evidence.Line > 0 {
+				distance := absInt(f.Evidence.Line - e.Line)
+				if distance <= 5 && distance < bestDistance {
+					best, bestDistance = j, distance
+				}
+			} else if e.Anchor != "" && f.Anchor == e.Anchor {
+				best = j
+				break
+			}
+		}
+		if best >= 0 {
+			markMatched(i, best, "file+line")
+		}
+	}
+
+	for i := range out.Actual {
+		if matchKind[i] == "" {
+			out.Actual[i].MatchKind = "unmatched"
+			out.FalsePositives++
+		} else {
+			out.Actual[i].MatchKind = matchKind[i]
+		}
+	}
+	for _, e := range expected {
 		if e.Severity == "P0" || e.Severity == "P1" {
 			out.P0P1Expected++
 		}
 	}
 	return out, nil
+}
+
+func sameFile(a, b string) bool {
+	normalize := func(p string) string {
+		p = strings.TrimPrefix(strings.ReplaceAll(strings.TrimSpace(p), "\\", "/"), "./")
+		return strings.ToLower(p)
+	}
+	return normalize(a) == normalize(b)
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 func validEvidence(f findings.Finding, files map[string]string) bool {
@@ -482,7 +596,7 @@ func treeIndex(root string) (map[string]string, error) {
 	return idx, err
 }
 
-func buildRepo(fix Fixture, dest string) (base, head string, err error) {
+func buildRepo(fix Fixture, dest string, stripMarkers bool) (base, head string, err error) {
 	if err := git(dest, "init", "-q"); err != nil {
 		return "", "", err
 	}
@@ -502,6 +616,11 @@ func buildRepo(fix Fixture, dest string) (base, head string, err error) {
 	if err := copyTree(filepath.Join(fix.Dir, "head"), dest); err != nil {
 		return "", "", err
 	}
+	if stripMarkers {
+		if err := stripSeedMarkers(dest); err != nil {
+			return "", "", err
+		}
+	}
 	if err := git(dest, "add", "-A"); err != nil {
 		return "", "", err
 	}
@@ -510,6 +629,30 @@ func buildRepo(fix Fixture, dest string) (base, head string, err error) {
 	}
 	head, err = revParse(dest)
 	return base, head, err
+}
+
+var seedLine = regexp.MustCompile(`(?m)//\s*revu-seed:[^\n]*`)
+
+// stripSeedMarkers removes ground-truth markers from the checked-out head tree
+// while preserving the number of lines. Real-model runs must not see the
+// expected anchor embedded in the source comment.
+func stripSeedMarkers(root string) error {
+	return filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if !seedLine.Match(data) {
+			return nil
+		}
+		return os.WriteFile(p, seedLine.ReplaceAll(data, []byte("//")), info.Mode())
+	})
 }
 
 func copyTree(src, dst string) error {
