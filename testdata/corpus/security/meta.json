@@ -9,7 +9,7 @@
       "anchor": "command-injection",
       "classification": "Security",
       "severity": "P0",
-      "line": 6
+      "line": 9
     }
   ]
 }

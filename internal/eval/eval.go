@@ -515,7 +515,9 @@ func runFixture(ctx context.Context, fix Fixture, prov provider.Provider, opts O
 			if e.Line > 0 && f.Evidence.Line > 0 {
 				distance := absInt(f.Evidence.Line - e.Line)
 				if distance <= 5 && distance < bestDistance {
-					best, bestDistance = j, distance
+					if distance == 0 || classificationCompatible(e.Classification, string(f.Classification)) {
+						best, bestDistance = j, distance
+					}
 				}
 			} else if e.Anchor != "" && f.Anchor == e.Anchor {
 				best = j
@@ -541,6 +543,19 @@ func runFixture(ctx context.Context, fix Fixture, prov provider.Provider, opts O
 		}
 	}
 	return out, nil
+}
+
+func classificationCompatible(expected, actual string) bool {
+	if expected == "" || actual == "" || strings.EqualFold(expected, actual) {
+		return true
+	}
+	switch strings.ToLower(expected) {
+	case "bug":
+		return strings.EqualFold(actual, "reliability")
+	case "reliability":
+		return strings.EqualFold(actual, "bug")
+	}
+	return false
 }
 
 func sameFile(a, b string) bool {
@@ -631,7 +646,7 @@ func buildRepo(fix Fixture, dest string, stripMarkers bool) (base, head string, 
 	return base, head, err
 }
 
-var seedLine = regexp.MustCompile(`(?m)//\s*revu-seed:[^\n]*`)
+var seedLine = regexp.MustCompile(`(?m)[ \t]*//\s*revu-seed:[^\n]*`)
 
 // stripSeedMarkers removes ground-truth markers from the checked-out head tree
 // while preserving the number of lines. Real-model runs must not see the
@@ -651,7 +666,7 @@ func stripSeedMarkers(root string) error {
 		if !seedLine.Match(data) {
 			return nil
 		}
-		return os.WriteFile(p, seedLine.ReplaceAll(data, []byte("//")), info.Mode())
+		return os.WriteFile(p, seedLine.ReplaceAll(data, nil), info.Mode())
 	})
 }
 

@@ -1,5 +1,8 @@
 package guide
 
-func Allowed() bool {
-	return true
+func Clamp(v, limit int) int {
+	if v > limit {
+		return limit
+	}
+	return v
 }

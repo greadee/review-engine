@@ -46,7 +46,7 @@ func TestStripSeedMarkersPreservesLineNumbers(t *testing.T) {
 	if strings.Count(got, "\n") != strings.Count(content, "\n") {
 		t.Fatalf("line count changed: %q", got)
 	}
-	if !strings.Contains(got, "func F() { //") {
+	if !strings.Contains(got, "func F() {") {
 		t.Fatalf("code line was damaged: %q", got)
 	}
 }
@@ -75,5 +75,17 @@ func TestExactAnchorMatchingStillWins(t *testing.T) {
 	}
 	if res.Detected != 1 || res.AnchorDetected != 1 || res.FalsePositives != 0 {
 		t.Fatalf("anchor match failed: detected=%d anchor=%d falsePositives=%d", res.Detected, res.AnchorDetected, res.FalsePositives)
+	}
+}
+
+func TestSemanticMatchRejectsUnrelatedNearbyClassification(t *testing.T) {
+	fix := fixtureByName(t, "test-gap")
+	fake := &provider.Fake{Responses: []string{`{"findings":[{"title":"divide by zero","classification":"Bug","severity":"P1","file":"calc.go","line":8,"snippet":"return v * 3","impact":"panic","recommendation":"guard","anchor":"divide-by-zero"}]}`}}
+	res, err := runFixture(context.Background(), fix, fake, Options{}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Detected != 0 || res.FalsePositives != 1 {
+		t.Fatalf("unrelated finding should not satisfy the test-gap expectation: detected=%d falsePositives=%d", res.Detected, res.FalsePositives)
 	}
 }

@@ -1,7 +1,10 @@
 package exec
 
-import "os/exec"
+import (
+	"context"
+	"os/exec"
+)
 
-func Run(userInput string) {
-	_ = exec.Command("sh", "-c", userInput).Run() // revu-seed: Security P0 command-injection
+func Run(ctx context.Context, userInput string) error {
+	return exec.CommandContext(ctx, "sh", "-c", userInput).Run() // revu-seed: Security P0 command-injection
 }

@@ -6,7 +6,7 @@
   "expected": [
     {
       "file": "calc.go",
-      "anchor": "missing-divide-test",
+      "anchor": "missing-triple-test",
       "classification": "Test",
       "severity": "P2",
       "line": 7
