@@ -43,3 +43,20 @@ func TestGroupFindingsBySeverityAndEmpty(t *testing.T) {
 		t.Fatal("empty input should produce no groups")
 	}
 }
+
+func TestGroupHeadingsAreSanitized(t *testing.T) {
+	fs := []findings.Finding{
+		{Title: "ok", Severity: findings.P2, Detector: "<script>@team`", Evidence: findings.Evidence{File: "a`b.go", Line: 1}},
+	}
+	g := GroupFindings(fs, "detector")
+	if len(g) != 1 {
+		t.Fatalf("expected one group, got %d", len(g))
+	}
+	for _, text := range []string{g[0].Title, g[0].Body, ConsolidatedBody(Run{Findings: fs, Profile: "<b>@here`"}, "detector")} {
+		for _, raw := range []string{"<script>", "@team", "@here"} {
+			if strings.Contains(text, raw) {
+				t.Fatalf("raw %q leaked in:\n%s", raw, text)
+			}
+		}
+	}
+}

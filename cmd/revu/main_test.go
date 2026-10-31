@@ -14,6 +14,7 @@ import (
 
 	"github.com/greadee/review-engine/internal/bundle"
 	"github.com/greadee/review-engine/internal/config"
+	"github.com/greadee/review-engine/internal/findings"
 	"github.com/greadee/review-engine/internal/issues"
 	"github.com/greadee/review-engine/internal/provider"
 	"github.com/greadee/review-engine/internal/vcs"
@@ -434,6 +435,39 @@ func TestIssueEvidenceResolver(t *testing.T) {
 		ok, reason := resolver(context.Background(), tc.ref, areas)
 		if ok != tc.wantOK || !strings.Contains(reason, tc.want) {
 			t.Errorf("%s: got (%v, %q), want (%v, reason containing %q)", tc.ref.Value, ok, reason, tc.wantOK, tc.want)
+		}
+	}
+}
+
+func TestReconcileCommentSanitizesUntrustedText(t *testing.T) {
+	v := issues.Verdict{
+		Criteria: 1,
+		Details: []issues.Criterion{{
+			Text: "<img src=x> @team `breakout`",
+			Done: true,
+			Checks: []issues.EvidenceCheck{{
+				Ref:    issues.EvidenceRef{Kind: issues.EvRef, Value: "#1`<script>"},
+				Reason: "<b>@here</b>",
+			}},
+		}},
+	}
+	body := reconcileComment(vcs.Issue{Number: 1}, v)
+	for _, raw := range []string{"<img", "@team", "<script>", "<b>", "@here", "`breakout`", "#1`"} {
+		if strings.Contains(body, raw) {
+			t.Fatalf("raw %q leaked into reconcile comment:\n%s", raw, body)
+		}
+	}
+}
+
+func TestRelatedFindingsCommentSanitizesUntrustedText(t *testing.T) {
+	body := relatedFindingsComment(vcs.Issue{Number: 1}, []findings.Finding{{
+		Title:    "<script>@team `breakout`",
+		Severity: findings.P2,
+		Evidence: findings.Evidence{File: "a`b.go", Line: 1},
+	}})
+	for _, raw := range []string{"<script>", "@team", "`breakout`", "a`b.go"} {
+		if strings.Contains(body, raw) {
+			t.Fatalf("raw %q leaked into related-findings comment:\n%s", raw, body)
 		}
 	}
 }

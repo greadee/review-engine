@@ -1334,10 +1334,10 @@ func reconcileComment(issue vcs.Issue, v issues.Verdict) string {
 			if c.Done {
 				box = "x"
 			}
-			fmt.Fprintf(&b, "- [%s] %s\n", box, c.Text)
+			fmt.Fprintf(&b, "- [%s] %s\n", box, report.Sanitize(c.Text))
 			for _, check := range c.Checks {
 				if !check.OK && check.Reason != "" {
-					fmt.Fprintf(&b, "  - `%s`: %s\n", check.Ref.Value, check.Reason)
+					fmt.Fprintf(&b, "  - `%s`: %s\n", report.Sanitize(check.Ref.Value), report.Sanitize(check.Reason))
 				}
 			}
 		}
@@ -1360,7 +1360,7 @@ func relatedFindingsComment(issue vcs.Issue, related []findings.Finding) string 
 		if f.Evidence.Line > 0 {
 			loc = fmt.Sprintf("%s:%d", loc, f.Evidence.Line)
 		}
-		fmt.Fprintf(&b, "- **[%s] %s** — `%s`\n", f.Severity, f.Title, loc)
+		fmt.Fprintf(&b, "- **[%s] %s** — `%s`\n", f.Severity, report.Sanitize(f.Title), report.Sanitize(loc))
 	}
 	b.WriteString("\n_Automated by review-engine._\n")
 	return b.String()

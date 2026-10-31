@@ -30,6 +30,9 @@ animal-rank nickname; the release purpose is the theme of the release notes.
   GitHub API, checks merged/closed state and touched areas, and rejects
   hex-looking words that are not real commits. Evidence remains reviewable, not
   proof.
+- Every bot-authored comment and grouped issue body now uses the shared
+  sanitizer for finding titles, file keys, criteria, headings, evidence
+  reasons, mentions, images, backticks, and control characters.
 
 #### Changed
 

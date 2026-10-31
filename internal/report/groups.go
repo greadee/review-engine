@@ -59,7 +59,7 @@ func GroupFindings(fs []findings.Finding, by string) []IssueGroup {
 		items := sortFindings(groups[k])
 		out = append(out, IssueGroup{
 			Key:      k,
-			Title:    fmt.Sprintf("[revu] %s (%d finding(s))", k, len(items)),
+			Title:    fmt.Sprintf("[revu] %s (%d finding(s))", sanitize(k), len(items)),
 			Body:     groupBody(by, k, items),
 			Labels:   groupLabels(items),
 			Findings: items,
@@ -73,18 +73,18 @@ func GroupFindings(fs []findings.Finding, by string) []IssueGroup {
 func ConsolidatedBody(r Run, by string) string {
 	var b strings.Builder
 	counts := r.Counts()
-	fmt.Fprintf(&b, "Automated review findings for profile `%s`.\n\n", firstNonEmpty(r.Profile, "review"))
+	fmt.Fprintf(&b, "Automated review findings for profile `%s`.\n\n", sanitize(firstNonEmpty(r.Profile, "review")))
 	fmt.Fprintf(&b, "**%d finding(s)** — P0=%d P1=%d P2=%d P3=%d.\n\n",
 		len(r.Findings), counts[findings.P0], counts[findings.P1], counts[findings.P2], counts[findings.P3])
 	if r.ID != "" {
-		fmt.Fprintf(&b, "Run: `%s`.\n\n", r.ID)
+		fmt.Fprintf(&b, "Run: `%s`.\n\n", sanitize(r.ID))
 	}
 	if r.ArchiveURL != "" {
 		fmt.Fprintf(&b, "Archived findings: %s\n\n", r.ArchiveURL)
 	}
 	b.WriteString("---\n\n")
 	for _, g := range GroupFindings(r.Findings, by) {
-		fmt.Fprintf(&b, "## %s (%d)\n\n", g.Key, len(g.Findings))
+		fmt.Fprintf(&b, "## %s (%d)\n\n", sanitize(g.Key), len(g.Findings))
 		writeTable(&b, g.Findings)
 		b.WriteString("\n")
 		writeDetails(&b, g.Findings)
@@ -127,7 +127,7 @@ func groupLabels(items []findings.Finding) []string {
 
 func groupBody(by, key string, items []findings.Finding) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Findings grouped by `%s` = `%s`.\n\n", by, key)
+	fmt.Fprintf(&b, "Findings grouped by `%s` = `%s`.\n\n", sanitize(by), sanitize(key))
 	writeTable(&b, items)
 	b.WriteString("\n")
 	writeDetails(&b, items)
