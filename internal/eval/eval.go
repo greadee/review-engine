@@ -27,11 +27,12 @@ import (
 
 // findingSpec is one expected finding in a fixture's manifest.
 type findingSpec struct {
-	File           string `json:"file"`
-	Line           int    `json:"line,omitempty"`
-	Anchor         string `json:"anchor"`
-	Classification string `json:"classification"`
-	Severity       string `json:"severity"`
+	File           string   `json:"file"`
+	AlternateFiles []string `json:"alternateFiles,omitempty"`
+	Line           int      `json:"line,omitempty"`
+	Anchor         string   `json:"anchor"`
+	Classification string   `json:"classification"`
+	Severity       string   `json:"severity"`
 }
 
 // FindingDetail is one actual model finding, kept for the publishable report.
@@ -290,7 +291,11 @@ func (r Report) Markdown() string {
 			b.WriteString("- none\n")
 		} else {
 			for _, e := range f.ExpectedDetails {
-				fmt.Fprintf(&b, "- `%s:%d` %s %s anchor=`%s`\n", e.File, e.Line, e.Classification, e.Severity, e.Anchor)
+				files := e.File
+				if len(e.AlternateFiles) > 0 {
+					files += " or " + strings.Join(e.AlternateFiles, " or ")
+				}
+				fmt.Fprintf(&b, "- `%s:%d` %s %s anchor=`%s`\n", files, e.Line, e.Classification, e.Severity, e.Anchor)
 			}
 		}
 		b.WriteString("\nActual:\n\n")
@@ -509,7 +514,7 @@ func runFixture(ctx context.Context, fix Fixture, prov provider.Provider, opts O
 		}
 		best, bestDistance := -1, 6
 		for j, e := range expected {
-			if matched[j] || !sameFile(f.Evidence.File, e.File) {
+			if matched[j] || !expectedFileMatches(f.Evidence.File, e) {
 				continue
 			}
 			if e.Line > 0 && f.Evidence.Line > 0 {
@@ -543,6 +548,18 @@ func runFixture(ctx context.Context, fix Fixture, prov provider.Provider, opts O
 		}
 	}
 	return out, nil
+}
+
+func expectedFileMatches(actual string, e findingSpec) bool {
+	if sameFile(actual, e.File) {
+		return true
+	}
+	for _, file := range e.AlternateFiles {
+		if sameFile(actual, file) {
+			return true
+		}
+	}
+	return false
 }
 
 func classificationCompatible(expected, actual string) bool {

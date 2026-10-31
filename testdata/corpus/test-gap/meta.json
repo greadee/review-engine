@@ -9,7 +9,10 @@
       "anchor": "missing-triple-test",
       "classification": "Test",
       "severity": "P2",
-      "line": 7
+      "line": 7,
+      "alternateFiles": [
+        "calc_test.go"
+      ]
     }
   ]
 }

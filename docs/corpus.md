@@ -5,7 +5,7 @@ the PR-review claim. Each fixture is a directory:
 
 ```
 testdata/corpus/<name>/
-  meta.json     # profile, clean/adversarial flags, notes, expected findings (file, line, anchor, class, severity)
+  meta.json     # profile, clean/adversarial flags, notes, expected findings (file, alternateFiles, line, anchor, class, severity)
   base/         # file tree for the base revision
   head/         # file tree for the head revision (the "PR")
 ```
@@ -117,9 +117,10 @@ Common causes of a fully incomplete pinned-model run:
 - **Recall** — detected / seeded defects, and specifically for P0/P1.
 - **Exact anchor match** — the model emitted the expected anchor slug. The
   deterministic oracle matches this way.
-- **Semantic match** — a real-model finding cites the expected file within five
-  lines of the seeded line. This is the recall/precision basis for real models,
-  because they cannot know the expected anchor names.
+- **Semantic match** — a real-model finding cites the expected file (or an
+  `alternateFiles` entry, such as the relevant test file) within five lines of
+  the seeded line. This is the recall/precision basis for real models, because
+  they cannot know the expected anchor names.
 - **Severity accuracy** — detected defects reported at the seeded severity.
 - **False positives** — findings that do not match an expected anchor, including
   any finding on a clean/adversarial fixture.

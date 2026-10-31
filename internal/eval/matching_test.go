@@ -89,3 +89,15 @@ func TestSemanticMatchRejectsUnrelatedNearbyClassification(t *testing.T) {
 		t.Fatalf("unrelated finding should not satisfy the test-gap expectation: detected=%d falsePositives=%d", res.Detected, res.FalsePositives)
 	}
 }
+
+func TestSemanticMatchAllowsAlternateTestFile(t *testing.T) {
+	fix := fixtureByName(t, "test-gap")
+	fake := &provider.Fake{Responses: []string{`{"findings":[{"title":"Triple has no test coverage","classification":"Test","severity":"P3","file":"calc_test.go","line":5,"snippet":"func TestDouble(t *testing.T) {","impact":"regression risk","recommendation":"add a Triple test","anchor":"triple-untested"}]}`}}
+	res, err := runFixture(context.Background(), fix, fake, Options{}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Detected != 1 || res.FalsePositives != 0 {
+		t.Fatalf("alternate test file should match the missing-test expectation: detected=%d falsePositives=%d actual=%+v", res.Detected, res.FalsePositives, res.Actual)
+	}
+}

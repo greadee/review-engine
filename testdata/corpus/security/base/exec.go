@@ -1,10 +1,7 @@
 package exec
 
-import (
-	"context"
-	"os/exec"
-)
+import "os/exec"
 
-func Run(ctx context.Context, userInput string) error {
-	return exec.CommandContext(ctx, "echo", userInput).Run()
+func Run(userInput string) error {
+	return exec.Command("echo", userInput).Run()
 }

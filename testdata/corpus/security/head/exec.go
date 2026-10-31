@@ -1,10 +1,13 @@
 package exec
 
 import (
-	"context"
+	"fmt"
 	"os/exec"
 )
 
-func Run(ctx context.Context, userInput string) error {
-	return exec.CommandContext(ctx, "sh", "-c", userInput).Run() // revu-seed: Security P0 command-injection
+func Run(userInput string) error {
+	if err := exec.Command("sh", "-c", userInput).Run(); err != nil { // revu-seed: Security P0 command-injection
+		return fmt.Errorf("run command: %w", err)
+	}
+	return nil
 }

@@ -1,8 +1,6 @@
 package guide
 
-func Clamp(v, limit int) int {
-	if v > limit {
-		return limit
-	}
-	return v
+// Add returns a + b.
+func Add(a, b int) int {
+	return a + b
 }
