@@ -365,14 +365,18 @@ gofmt -l .
 
 `testdata/corpus/` is a seeded PR corpus (correctness, security, reliability,
 test-gap, clean, and prompt-injection fixtures) with agreed release thresholds.
-Run it hermetically with the deterministic oracle provider:
+It covers ignore-instructions, forged-finding, suppression, and
+delimiter-spoofing attacks. Run it hermetically with the deterministic oracle
+provider:
 
 ```bash
 revu eval --corpus testdata/corpus --check
 ```
 
-See [`docs/corpus.md`](docs/corpus.md) for the fixtures, metrics, thresholds, and
-how to run the optional pinned-model evaluation.
+The optional pinned-model evaluation reports precision, recall, severity
+accuracy, false positives, invalid evidence, latency, tokens, and estimated
+cost. See [`docs/corpus.md`](docs/corpus.md) for the fixtures, metrics,
+thresholds, methodology, known gaps, and the pinned-model command.
 
 Known constraints are recorded in [`docs/limitations.md`](docs/limitations.md).
 

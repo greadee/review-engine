@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/greadee/review-engine/internal/config"
 	"github.com/greadee/review-engine/internal/engine"
@@ -93,11 +94,33 @@ type FixtureResult struct {
 	InvalidEvidence  int
 	CoverageComplete bool
 	Verdict          string
+	Calls            int
+	Latency          time.Duration
+	Usage            provider.Usage
+}
+
+// Options records the exact evaluation settings and optional pricing. The
+// model returned by the provider is preferred over Model when both are present.
+type Options struct {
+	Model              string
+	MaxReasoningTokens int
+	MaxBatchFiles      int
+	MaxBatchBytes      int
+	SupportsJSONFormat *bool
+	InputCostPerMTok   float64
+	OutputCostPerMTok  float64
 }
 
 // Report aggregates the corpus run.
 type Report struct {
-	Fixtures []FixtureResult
+	Fixtures          []FixtureResult
+	Provider          string
+	Model             string
+	Options           Options
+	Latency           time.Duration
+	Usage             provider.Usage
+	InputCostPerMTok  float64
+	OutputCostPerMTok float64
 }
 
 // Counts returns totals used by the threshold checks.
@@ -151,6 +174,9 @@ func (c Counts) P0P1Recall() float64 { return ratio(c.P0P1Detected, c.P0P1Expect
 // SeverityAccuracy is the share of detected defects reported at the right severity.
 func (c Counts) SeverityAccuracy() float64 { return ratio(c.SeverityOK, c.Detected) }
 
+// Precision is the share of reported findings that match a seeded defect.
+func (c Counts) Precision() float64 { return ratio(c.Detected, c.Detected+c.FalsePositives) }
+
 func ratio(a, b int) float64 {
 	if b == 0 {
 		return 1
@@ -163,10 +189,35 @@ func (r Report) Markdown() string {
 	c := r.Counts()
 	var b strings.Builder
 	b.WriteString("# Seeded PR corpus results\n\n")
+
+	b.WriteString("## Run configuration\n\n")
+	b.WriteString("| Setting | Value |\n|---|---|\n")
+	fmt.Fprintf(&b, "| provider | %s |\n", valueOr(r.Provider, "unknown"))
+	fmt.Fprintf(&b, "| model | %s |\n", valueOr(r.Model, "(not reported)"))
+	fmt.Fprintf(&b, "| temperature | 0 |\n")
+	reasoning := "0 (unlimited)"
+	if r.Options.MaxReasoningTokens > 0 {
+		reasoning = fmt.Sprintf("%d", r.Options.MaxReasoningTokens)
+	}
+	fmt.Fprintf(&b, "| max reasoning tokens | %s |\n", reasoning)
+	autoFiles, autoBytes := 25, 150_000
+	if r.Options.MaxReasoningTokens > 0 {
+		autoFiles, autoBytes = 8, 80_000
+	}
+	fmt.Fprintf(&b, "| max batch files | %s |\n", limitValue(r.Options.MaxBatchFiles, autoFiles, "files"))
+	fmt.Fprintf(&b, "| max batch bytes | %s |\n", limitValue(r.Options.MaxBatchBytes, autoBytes, "bytes"))
+	supports := "provider default"
+	if r.Options.SupportsJSONFormat != nil {
+		supports = fmt.Sprintf("%t", *r.Options.SupportsJSONFormat)
+	}
+	fmt.Fprintf(&b, "| supports response_format | %s |\n", supports)
+
+	b.WriteString("\n## Results\n\n")
 	b.WriteString("| Metric | Value |\n|---|---|\n")
 	fmt.Fprintf(&b, "| fixtures | %d |\n", c.Fixtures)
 	fmt.Fprintf(&b, "| seeded defects | %d |\n", c.Expected)
 	fmt.Fprintf(&b, "| detected | %d |\n", c.Detected)
+	fmt.Fprintf(&b, "| precision | %.0f%% |\n", c.Precision()*100)
 	fmt.Fprintf(&b, "| recall (all) | %.0f%% |\n", c.Recall()*100)
 	fmt.Fprintf(&b, "| recall (P0/P1) | %.0f%% |\n", c.P0P1Recall()*100)
 	fmt.Fprintf(&b, "| severity accuracy | %.0f%% |\n", c.SeverityAccuracy()*100)
@@ -174,15 +225,51 @@ func (r Report) Markdown() string {
 	fmt.Fprintf(&b, "| findings on clean/adversarial | %d |\n", c.CleanFindings)
 	fmt.Fprintf(&b, "| invalid evidence | %d |\n", c.InvalidEvidence)
 	fmt.Fprintf(&b, "| clean fixtures with full coverage | %d/%d |\n", c.CleanCovered, c.CleanFixtures)
-	b.WriteString("\n| fixture | expected | found | detected | verdict | coverage |\n|---|---|---|---|---|---|\n")
+	fmt.Fprintf(&b, "| latency | %s |\n", r.Latency.Round(time.Millisecond))
+	fmt.Fprintf(&b, "| prompt tokens | %d |\n", r.Usage.PromptTokens)
+	fmt.Fprintf(&b, "| completion tokens | %d |\n", r.Usage.CompletionTokens)
+	fmt.Fprintf(&b, "| total tokens | %d |\n", r.Usage.TotalTokens)
+	if cost, ok := r.CostUSD(); ok {
+		fmt.Fprintf(&b, "| estimated cost | $%.6f |\n", cost)
+	} else {
+		b.WriteString("| estimated cost | n/a (set cost flags) |\n")
+	}
+
+	b.WriteString("\n| fixture | expected | found | detected | verdict | coverage | latency | tokens |\n|---|---|---|---|---|---|---|---|\n")
 	for _, f := range r.Fixtures {
 		cov := "complete"
 		if !f.CoverageComplete {
 			cov = "INCOMPLETE"
 		}
-		fmt.Fprintf(&b, "| %s | %d | %d | %d | %s | %s |\n", f.Name, f.Expected, f.Findings, f.Detected, f.Verdict, cov)
+		fmt.Fprintf(&b, "| %s | %d | %d | %d | %s | %s | %s | %d |\n",
+			f.Name, f.Expected, f.Findings, f.Detected, f.Verdict, cov,
+			f.Latency.Round(time.Millisecond), f.Usage.TotalTokens)
 	}
 	return b.String()
+}
+
+func valueOr(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func limitValue(value, automatic int, unit string) string {
+	if value > 0 {
+		return fmt.Sprintf("%d %s", value, unit)
+	}
+	return fmt.Sprintf("automatic (%d %s)", automatic, unit)
+}
+
+// CostUSD returns the estimated provider cost when pricing is configured.
+func (r Report) CostUSD() (float64, bool) {
+	if r.InputCostPerMTok == 0 && r.OutputCostPerMTok == 0 {
+		return 0, false
+	}
+	cost := float64(r.Usage.PromptTokens)/1_000_000*r.InputCostPerMTok +
+		float64(r.Usage.CompletionTokens)/1_000_000*r.OutputCostPerMTok
+	return cost, true
 }
 
 // Run executes every fixture through the review pipeline with the given
@@ -190,18 +277,66 @@ func (r Report) Markdown() string {
 // so passing Oracle makes the run deterministic; passing a real provider runs
 // the optional pinned-model evaluation.
 func Run(ctx context.Context, fixtures []Fixture, prov provider.Provider) (Report, error) {
-	var report Report
+	return RunWithOptions(ctx, fixtures, prov, Options{})
+}
+
+// RunWithOptions is Run with explicit model, batching, and pricing settings.
+func RunWithOptions(ctx context.Context, fixtures []Fixture, prov provider.Provider, opts Options) (Report, error) {
+	report := Report{
+		Provider:          prov.Name(),
+		Model:             opts.Model,
+		Options:           opts,
+		InputCostPerMTok:  opts.InputCostPerMTok,
+		OutputCostPerMTok: opts.OutputCostPerMTok,
+	}
 	for _, fix := range fixtures {
-		res, err := runFixture(ctx, fix, prov)
+		recorder := &recordingProvider{inner: prov}
+		res, err := runFixture(ctx, fix, recorder, opts)
 		if err != nil {
 			return Report{}, fmt.Errorf("eval: fixture %s: %w", fix.Name, err)
 		}
+		res.Calls = recorder.calls
+		res.Latency = recorder.latency
+		res.Usage = recorder.usage
 		report.Fixtures = append(report.Fixtures, res)
+		report.Latency += recorder.latency
+		addUsage(&report.Usage, recorder.usage)
+		if recorder.model != "" {
+			report.Model = recorder.model
+		}
 	}
 	return report, nil
 }
 
-func runFixture(ctx context.Context, fix Fixture, prov provider.Provider) (FixtureResult, error) {
+type recordingProvider struct {
+	inner   provider.Provider
+	calls   int
+	latency time.Duration
+	usage   provider.Usage
+	model   string
+}
+
+func (r *recordingProvider) Name() string { return r.inner.Name() }
+
+func (r *recordingProvider) Complete(ctx context.Context, req provider.Request) (provider.Response, error) {
+	start := time.Now()
+	resp, err := r.inner.Complete(ctx, req)
+	r.calls++
+	r.latency += time.Since(start)
+	if resp.Model != "" {
+		r.model = resp.Model
+	}
+	addUsage(&r.usage, resp.Usage)
+	return resp, err
+}
+
+func addUsage(dst *provider.Usage, src provider.Usage) {
+	dst.PromptTokens += src.PromptTokens
+	dst.CompletionTokens += src.CompletionTokens
+	dst.TotalTokens += src.TotalTokens
+}
+
+func runFixture(ctx context.Context, fix Fixture, prov provider.Provider, opts Options) (FixtureResult, error) {
 	dir, err := os.MkdirTemp("", "revu-eval-")
 	if err != nil {
 		return FixtureResult{}, err
@@ -229,11 +364,15 @@ func runFixture(ctx context.Context, fix Fixture, prov provider.Provider) (Fixtu
 	if err != nil {
 		return FixtureResult{}, err
 	}
+	model := opts.Model
+	if model == "" {
+		model = "eval"
+	}
 	eng := engine.New(engine.Options{
 		Config:   cfg,
 		Repo:     repo,
 		Provider: prov,
-		Reviewer: reviewers.New(prov, "eval", 0, nil),
+		Reviewer: reviewers.NewWithLimits(prov, model, opts.MaxReasoningTokens, opts.SupportsJSONFormat, opts.MaxBatchFiles, opts.MaxBatchBytes),
 		Store:    store.Stateless{},
 	})
 	res, err := eng.RunRange(ctx, fix.Meta.Profile, base, head, "eval/"+fix.Name, "HEAD")
@@ -402,10 +541,7 @@ type Oracle struct{}
 // Name implements provider.Provider.
 func (Oracle) Name() string { return "oracle" }
 
-var (
-	seedMarker = regexp.MustCompile(`revu-seed:\s*([A-Za-z][A-Za-z ]*?)\s+(P[0-3])\s+(\S+)`)
-	fileHeader = regexp.MustCompile(`(?m)^=== FILE: (.*) ===$`)
-)
+var seedMarker = regexp.MustCompile(`revu-seed:\s*([A-Za-z][A-Za-z ]*?)\s+(P[0-3])\s+(\S+)`)
 
 // Complete implements provider.Provider.
 func (Oracle) Complete(_ context.Context, req provider.Request) (provider.Response, error) {
@@ -416,8 +552,8 @@ func (Oracle) Complete(_ context.Context, req provider.Request) (provider.Respon
 		}
 	}
 	var out []map[string]any
-	for _, f := range splitPromptFiles(user) {
-		for i, line := range strings.Split(f.content, "\n") {
+	for _, f := range reviewers.ParsePromptFiles(user) {
+		for i, line := range strings.Split(f.Content, "\n") {
 			m := seedMarker.FindStringSubmatch(line)
 			if m == nil {
 				continue
@@ -430,7 +566,7 @@ func (Oracle) Complete(_ context.Context, req provider.Request) (provider.Respon
 				"title":          "Seeded " + string(cls) + " defect",
 				"classification": string(cls),
 				"severity":       m[2],
-				"file":           f.path,
+				"file":           f.Path,
 				"line":           i + 1,
 				"snippet":        strings.TrimSpace(line),
 				"impact":         "Seeded corpus defect.",
@@ -444,27 +580,4 @@ func (Oracle) Complete(_ context.Context, req provider.Request) (provider.Respon
 		return provider.Response{}, err
 	}
 	return provider.Response{Text: string(data), Model: "oracle"}, nil
-}
-
-type promptFile struct {
-	path    string
-	content string
-}
-
-func splitPromptFiles(prompt string) []promptFile {
-	idx := fileHeader.FindAllStringSubmatchIndex(prompt, -1)
-	var out []promptFile
-	for i, m := range idx {
-		path := prompt[m[2]:m[3]]
-		start := m[1]
-		end := len(prompt)
-		if i+1 < len(idx) {
-			end = idx[i+1][0]
-		}
-		content := prompt[start:end]
-		content = strings.TrimPrefix(content, "\n")
-		content = strings.TrimSuffix(content, "\n\n")
-		out = append(out, promptFile{path: path, content: content})
-	}
-	return out
 }

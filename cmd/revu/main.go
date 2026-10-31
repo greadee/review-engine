@@ -1471,6 +1471,11 @@ func evalCorpus(args []string) error {
 	out := fs.String("out", "", "write the results Markdown to a file")
 	providerName := fs.String("provider", "oracle", "provider: oracle | fake | openai-compatible")
 	model := fs.String("model", "", "model id for a provider-backed evaluation")
+	maxReasoning := fs.Int("max-reasoning-tokens", 0, "max reasoning tokens for the pinned model")
+	maxBatchFiles := fs.Int("max-batch-files", 0, "max files per semantic request (0 = automatic)")
+	maxBatchBytes := fs.Int("max-batch-bytes", 0, "max bytes per semantic request (0 = automatic)")
+	inputCost := fs.Float64("input-cost-per-mtok", 0, "input cost in USD per million tokens (0 = omit)")
+	outputCost := fs.Float64("output-cost-per-mtok", 0, "output cost in USD per million tokens (0 = omit)")
 	check := fs.Bool("check", false, "exit non-zero unless the corpus meets the release thresholds")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -1499,7 +1504,14 @@ func evalCorpus(args []string) error {
 			return err
 		}
 	}
-	report, err := eval.Run(context.Background(), fixtures, prov)
+	report, err := eval.RunWithOptions(context.Background(), fixtures, prov, eval.Options{
+		Model:              *model,
+		MaxReasoningTokens: *maxReasoning,
+		MaxBatchFiles:      *maxBatchFiles,
+		MaxBatchBytes:      *maxBatchBytes,
+		InputCostPerMTok:   *inputCost,
+		OutputCostPerMTok:  *outputCost,
+	})
 	if err != nil {
 		return err
 	}
@@ -1513,9 +1525,10 @@ func evalCorpus(args []string) error {
 	}
 	if *check {
 		c := report.Counts()
-		if c.P0P1Recall() < 1.0 || c.SeverityAccuracy() < 1.0 || c.FalsePositives > 0 || c.InvalidEvidence > 0 || c.CleanFindings > 0 {
-			return fmt.Errorf("corpus does not meet release thresholds (recall=%.2f severity=%.2f fp=%d invalid=%d clean=%d)",
-				c.P0P1Recall(), c.SeverityAccuracy(), c.FalsePositives, c.InvalidEvidence, c.CleanFindings)
+		if c.Recall() < 1.0 || c.P0P1Recall() < 1.0 || c.SeverityAccuracy() < 1.0 || c.Precision() < 1.0 ||
+			c.FalsePositives > 0 || c.InvalidEvidence > 0 || c.CleanFindings > 0 {
+			return fmt.Errorf("corpus does not meet release thresholds (precision=%.2f recall=%.2f p0p1=%.2f severity=%.2f fp=%d invalid=%d clean=%d)",
+				c.Precision(), c.Recall(), c.P0P1Recall(), c.SeverityAccuracy(), c.FalsePositives, c.InvalidEvidence, c.CleanFindings)
 		}
 	}
 	return nil

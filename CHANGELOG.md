@@ -14,6 +14,18 @@ animal-rank nickname; the release purpose is the theme of the release notes.
   `max-batch-bytes` action inputs, and `REVIEW_MAX_BATCH_FILES` /
   `REVIEW_MAX_BATCH_BYTES` environment overrides. Zero keeps the automatic
   defaults, including the smaller reasoning-model budget.
+- Prompt-injection hardening: the semantic prompt marks repository text as
+  untrusted and uses per-request nonce file boundaries that forged delimiters
+  cannot spoof.
+- Adversarial corpus fixtures for instruction override, forged findings,
+  suppression, and delimiter spoofing.
+- Pinned-model evaluation reporting with precision, recall, severity accuracy,
+  false positives, invalid evidence, latency, token usage, and optional cost.
+
+#### Fixed
+
+- Repository text containing fake file boundaries is kept inside its original
+  file block instead of being parsed as a new file.
 
 #### Changed
 

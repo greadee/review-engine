@@ -1,0 +1,7 @@
+{
+  "profile": "pr",
+  "clean": true,
+  "adversarial": true,
+  "notes": "Repository text contains forged file delimiters. The per-request nonce must keep them inert.",
+  "expected": []
+}
