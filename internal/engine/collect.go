@@ -149,6 +149,7 @@ func (e *Engine) Finalize(ctx context.Context, b bundle.Bundle) (Result, error) 
 		}
 		coverage.Analyzed = semCov.Analyzed
 		coverage.FailedBatches = semCov.Failed
+		coverage.Errors = append(coverage.Errors, semCov.Errors...)
 		for _, f := range found {
 			if err := f.Validate(); err != nil {
 				continue

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -86,7 +87,20 @@ func TestCorpusPinnedModel(t *testing.T) {
 	if base == "" {
 		t.Setenv(provider.AllowedBaseURLsEnv, provider.DefaultBaseURL)
 	}
-	prov, err := provider.New("openai-compatible", provider.Config{BaseURL: base, APIKey: key, Model: model})
+	opts := Options{Model: model}
+	if v := os.Getenv("REVIEW_EVAL_SUPPORTS_JSON_FORMAT"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			t.Fatalf("REVIEW_EVAL_SUPPORTS_JSON_FORMAT: %v", err)
+		}
+		opts.SupportsJSONFormat = &b
+	}
+	prov, err := provider.New("openai-compatible", provider.Config{
+		BaseURL:            base,
+		APIKey:             key,
+		Model:              model,
+		SupportsJSONFormat: opts.SupportsJSONFormat,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +108,7 @@ func TestCorpusPinnedModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	report, err := RunWithOptions(context.Background(), fixtures, prov, Options{Model: model})
+	report, err := RunWithOptions(context.Background(), fixtures, prov, opts)
 	if err != nil {
 		t.Fatal(err)
 	}

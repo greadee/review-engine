@@ -97,6 +97,7 @@ type FixtureResult struct {
 	Calls            int
 	Latency          time.Duration
 	Usage            provider.Usage
+	Errors           []string
 }
 
 // Options records the exact evaluation settings and optional pricing. The
@@ -235,6 +236,19 @@ func (r Report) Markdown() string {
 		b.WriteString("| estimated cost | n/a (set cost flags) |\n")
 	}
 
+	var failures []string
+	for _, f := range r.Fixtures {
+		for _, e := range f.Errors {
+			failures = append(failures, fmt.Sprintf("- **%s**: %s", f.Name, truncateError(e)))
+		}
+	}
+	if len(failures) > 0 {
+		b.WriteString("\n## Provider errors\n\n")
+		for _, f := range failures {
+			b.WriteString(f + "\n")
+		}
+	}
+
 	b.WriteString("\n| fixture | expected | found | detected | verdict | coverage | latency | tokens |\n|---|---|---|---|---|---|---|---|\n")
 	for _, f := range r.Fixtures {
 		cov := "complete"
@@ -246,6 +260,15 @@ func (r Report) Markdown() string {
 			f.Latency.Round(time.Millisecond), f.Usage.TotalTokens)
 	}
 	return b.String()
+}
+
+func truncateError(err string) string {
+	const max = 400
+	err = strings.TrimSpace(strings.ReplaceAll(err, "\n", " "))
+	if len(err) <= max {
+		return err
+	}
+	return err[:max] + "..."
 }
 
 func valueOr(value, fallback string) string {
@@ -392,6 +415,7 @@ func runFixture(ctx context.Context, fix Fixture, prov provider.Provider, opts O
 		Findings:         len(res.Run.Findings),
 		CoverageComplete: res.Run.Coverage.Complete(),
 		Verdict:          res.Run.Recommendation(),
+		Errors:           append([]string(nil), res.Run.Coverage.Errors...),
 	}
 	seen := map[string]bool{}
 	for _, f := range res.Run.Findings {

@@ -1474,6 +1474,7 @@ func evalCorpus(args []string) error {
 	maxReasoning := fs.Int("max-reasoning-tokens", 0, "max reasoning tokens for the pinned model")
 	maxBatchFiles := fs.Int("max-batch-files", 0, "max files per semantic request (0 = automatic)")
 	maxBatchBytes := fs.Int("max-batch-bytes", 0, "max bytes per semantic request (0 = automatic)")
+	supportsJSON := fs.String("supports-json-format", "", "send response_format=json_object (true|false; empty = provider default)")
 	inputCost := fs.Float64("input-cost-per-mtok", 0, "input cost in USD per million tokens (0 = omit)")
 	outputCost := fs.Float64("output-cost-per-mtok", 0, "output cost in USD per million tokens (0 = omit)")
 	check := fs.Bool("check", false, "exit non-zero unless the corpus meets the release thresholds")
@@ -1483,6 +1484,14 @@ func evalCorpus(args []string) error {
 	fixtures, err := eval.Load(*corpus)
 	if err != nil {
 		return err
+	}
+	var supportsJSONFormat *bool
+	if strings.TrimSpace(*supportsJSON) != "" {
+		v, err := strconv.ParseBool(strings.TrimSpace(*supportsJSON))
+		if err != nil {
+			return fmt.Errorf("--supports-json-format: %w", err)
+		}
+		supportsJSONFormat = &v
 	}
 	var prov provider.Provider
 	switch *providerName {
@@ -1496,9 +1505,11 @@ func evalCorpus(args []string) error {
 			return fmt.Errorf("no API key: set REVIEW_PROVIDER_API_KEY for provider %s", *providerName)
 		}
 		prov, err = provider.New(*providerName, provider.Config{
-			BaseURL: os.Getenv("REVIEW_PROVIDER_BASE_URL"),
-			APIKey:  key,
-			Model:   *model,
+			BaseURL:            os.Getenv("REVIEW_PROVIDER_BASE_URL"),
+			APIKey:             key,
+			Model:              *model,
+			MaxReasoningTokens: *maxReasoning,
+			SupportsJSONFormat: supportsJSONFormat,
 		})
 		if err != nil {
 			return err
@@ -1509,6 +1520,7 @@ func evalCorpus(args []string) error {
 		MaxReasoningTokens: *maxReasoning,
 		MaxBatchFiles:      *maxBatchFiles,
 		MaxBatchBytes:      *maxBatchBytes,
+		SupportsJSONFormat: supportsJSONFormat,
 		InputCostPerMTok:   *inputCost,
 		OutputCostPerMTok:  *outputCost,
 	})

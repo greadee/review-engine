@@ -8,8 +8,9 @@ revu eval \
   --corpus testdata/corpus \
   --provider openai-compatible \
   --model 'deepseek v4.1 flash 1017' \
-  --input-cost-per-mtok <input-price> \
-  --output-cost-per-mtok <output-price> \
+  --supports-json-format false \
+  --input-cost-per-mtok 0.00 \
+  --output-cost-per-mtok 0.00 \
   --out docs/evaluation/1.3.0-narwhal.md
 ```
 
@@ -25,3 +26,4 @@ Rules:
   budgeted release artifact.
 - Record the exact model identifier and settings used for the run.
 - Treat the report as a snapshot for that model and corpus, not a guarantee.
+- If the provider rejects `response_format`, pass `--supports-json-format false`.

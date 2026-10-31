@@ -40,6 +40,9 @@ type Coverage struct {
 	TruncatedBytes int     `json:"truncatedBytes,omitempty"`
 	FailedBatches  int     `json:"failedBatches,omitempty"`
 	Threshold      float64 `json:"threshold,omitempty"`
+	// Errors records failed-batch diagnostics. A failed batch makes coverage
+	// incomplete; keeping the reason makes the failure actionable.
+	Errors []string `json:"errors,omitempty"`
 }
 
 // Fraction is the share of selected files that reached analysis.
