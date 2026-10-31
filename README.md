@@ -286,7 +286,9 @@ Each semantic request is bounded independently by `review.maxBatchFiles`
 `REVIEW_MAX_BATCH_BYTES`). Leave either at `0` for the automatic default:
 25 files / 150,000 bytes, or 8 files / 80,000 bytes when
 `provider.maxReasoningTokens` is set. Tune these to the model's context window
-and cost budget; they do not change which files are selected for review.
+and cost budget; they do not change which files are selected for review. In a
+PR-scoped `run`, these limits come from the trusted base revision unless a
+workflow-owned action input or environment override is set.
 
 ### Tracking store
 

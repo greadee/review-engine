@@ -476,6 +476,14 @@ func run(args []string) error {
 	cfg.Review.MaxFileBytes = trusted.Review.MaxFileBytes
 	cfg.Review.BlockThreshold = trusted.Review.BlockThreshold
 	cfg.Review.CoverageThreshold = trusted.Review.CoverageThreshold
+	// Batch limits are policy too, but a workflow-controlled action input or
+	// environment override must win over repository configuration.
+	if os.Getenv("REVIEW_MAX_BATCH_FILES") == "" {
+		cfg.Review.MaxBatchFiles = trusted.Review.MaxBatchFiles
+	}
+	if os.Getenv("REVIEW_MAX_BATCH_BYTES") == "" {
+		cfg.Review.MaxBatchBytes = trusted.Review.MaxBatchBytes
+	}
 	if len(trusted.Review.Rubric) > 0 {
 		cfg.Review.Rubric = trusted.Review.Rubric
 	}
