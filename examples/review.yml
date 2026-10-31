@@ -24,10 +24,19 @@ permissions:
 jobs:
   review:
     runs-on: ubuntu-latest
+    concurrency:
+      group: revu-review-${{ github.repository }}-${{ github.event.pull_request.number }}-pr
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .review-state
+          key: revu-state-${{ github.repository }}-pr-${{ github.event.pull_request.number }}-pr-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            revu-state-${{ github.repository }}-pr-${{ github.event.pull_request.number }}-pr-
       - uses: greadee/review-engine@7de258fcb3c50467bdc87f89443af800527f706a
         with:
           profile: pr

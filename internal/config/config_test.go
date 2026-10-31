@@ -67,6 +67,58 @@ func TestAPIKeyFromEnv(t *testing.T) {
 	}
 }
 
+func TestSemanticBatchLimitsFromFile(t *testing.T) {
+	cfg, err := LoadData([]byte("review:\n  maxBatchFiles: 5\n  maxBatchBytes: 9000\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Review.MaxBatchFiles != 5 || cfg.Review.MaxBatchBytes != 9000 {
+		t.Fatalf("batch limits not applied: %+v", cfg.Review)
+	}
+}
+
+func TestSemanticBatchLimitsDefaultToAutomatic(t *testing.T) {
+	cfg, err := LoadData(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Review.MaxBatchFiles != 0 || cfg.Review.MaxBatchBytes != 0 {
+		t.Fatalf("expected automatic defaults (0), got %+v", cfg.Review)
+	}
+}
+
+func TestSemanticBatchLimitsEnvOverrides(t *testing.T) {
+	t.Setenv("REVIEW_MAX_BATCH_FILES", "7")
+	t.Setenv("REVIEW_MAX_BATCH_BYTES", "120000")
+	cfg, err := LoadData(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Review.MaxBatchFiles != 7 || cfg.Review.MaxBatchBytes != 120000 {
+		t.Fatalf("env batch limits not applied: %+v", cfg.Review)
+	}
+}
+
+func TestSemanticBatchLimitsProfileOverride(t *testing.T) {
+	cfg := Default()
+	cfg.Profiles = map[string]ProfileOverride{
+		"impact": {MaxBatchFiles: 4, MaxBatchBytes: 8000},
+	}
+	cfg.ApplyProfile("impact")
+	if cfg.Review.MaxBatchFiles != 4 || cfg.Review.MaxBatchBytes != 8000 {
+		t.Fatalf("profile batch limits not applied: %+v", cfg.Review)
+	}
+}
+
+func TestNegativeSemanticBatchLimitsRejected(t *testing.T) {
+	if _, err := LoadData([]byte("review:\n  maxBatchFiles: -1\n")); err == nil {
+		t.Fatal("negative maxBatchFiles must be rejected")
+	}
+	if _, err := LoadData([]byte("review:\n  maxBatchBytes: -1\n")); err == nil {
+		t.Fatal("negative maxBatchBytes must be rejected")
+	}
+}
+
 func TestRedactedClearsCredentials(t *testing.T) {
 	cfg := Default()
 	cfg.GitHubToken = "secret-token"

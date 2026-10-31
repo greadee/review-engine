@@ -144,7 +144,7 @@ A review runs in two phases so untrusted code never shares a job with the API ke
 revu collect --profile pr --base origin/main --head HEAD --out bundle.json
 
 # Phase 2 — secrets, never checks out the PR
-revu finalize --bundle bundle.json --repository owner/name --pr 42 --comment --publish
+revu finalize --bundle bundle.json --repository owner/name --pr 42 --expect-pr 42 --comment --publish
 ```
 
 `revu run` is simply collect + finalize in one process. The reusable workflow
@@ -280,17 +280,31 @@ numbers.
   (default `1.0`). Lower it to accept partial coverage; raise `maxFiles` /
   `maxFileBytes` to actually cover more.
 
+Each semantic request is bounded independently by `review.maxBatchFiles`
+(action input `max-batch-files`, env `REVIEW_MAX_BATCH_FILES`) and
+`review.maxBatchBytes` (action input `max-batch-bytes`, env
+`REVIEW_MAX_BATCH_BYTES`). Leave either at `0` for the automatic default:
+25 files / 150,000 bytes, or 8 files / 80,000 bytes when
+`provider.maxReasoningTokens` is set. Tune these to the model's context window
+and cost budget; they do not change which files are selected for review. In a
+PR-scoped `run`, these limits come from the trusted base revision unless a
+workflow-owned action input or environment override is set.
+
 ### Tracking store
 
 Tracking is on by default and uses the JSON store at `--state-dir`
 (`.review-state`). Set `store.sqlite: true` (or `REVIEW_STORE_SQLITE=true`) to use
 the opt-in SQLite backend, which is pure-Go (no cgo) and stores at
-`<state-dir>/review.db` by default. Both backends implement the same interface and
-hold identical findings. See [`docs/adr/0006-optional-sqlite-store.md`](docs/adr/0006-optional-sqlite-store.md).
+`<state-dir>/review.db` by default. An explicit `store.path` is also scoped per
+PR and profile (`review.pr-<number>.<profile>.db`) so one PR cannot replace
+another PR's state. Both
+backends implement the same interface and hold identical findings. See
+[`docs/adr/0006-optional-sqlite-store.md`](docs/adr/0006-optional-sqlite-store.md).
 
-In CI, `.review-state` is not persisted by the provided workflows yet, so
-lifecycle state is per-job. Persistent CI state and per-PR lifecycle scoping are
-scheduled for 1.3.
+In CI, the example workflows cache `.review-state` per pull request. The CLI
+stores lifecycle state under `.review-state/pr-<number>/<profile>`, so one PR or
+profile cannot mark another's findings resolved. A cold cache starts a fresh
+lifecycle.
 
 ## Detectors
 
@@ -351,14 +365,18 @@ gofmt -l .
 
 `testdata/corpus/` is a seeded PR corpus (correctness, security, reliability,
 test-gap, clean, and prompt-injection fixtures) with agreed release thresholds.
-Run it hermetically with the deterministic oracle provider:
+It covers ignore-instructions, forged-finding, suppression, and
+delimiter-spoofing attacks. Run it hermetically with the deterministic oracle
+provider:
 
 ```bash
 revu eval --corpus testdata/corpus --check
 ```
 
-See [`docs/corpus.md`](docs/corpus.md) for the fixtures, metrics, thresholds, and
-how to run the optional pinned-model evaluation.
+The optional pinned-model evaluation reports precision, recall, severity
+accuracy, false positives, invalid evidence, latency, tokens, and estimated
+cost. See [`docs/corpus.md`](docs/corpus.md) for the fixtures, metrics,
+thresholds, methodology, known gaps, and the pinned-model command.
 
 Known constraints are recorded in [`docs/limitations.md`](docs/limitations.md).
 

@@ -6,6 +6,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/greadee/review-engine/internal/profiles"
 	"github.com/greadee/review-engine/internal/vcs"
 )
 
@@ -17,6 +18,16 @@ type Scope struct {
 	Changes []vcs.Change
 	// Files are the changed paths selected for review (deleted files excluded).
 	Files []string
+}
+
+// ChangesForProfile chooses the trusted diff for a profile. The PR profile uses
+// the merge base so a moved base branch does not add reverse changes. Impact,
+// sprint, and whole-repo profiles use the direct two-dot diff they document.
+func ChangesForProfile(repo *vcs.Repo, profile, base, head string) ([]vcs.Change, error) {
+	if profile == profiles.PR {
+		return repo.ChangesFromMergeBase(base, head)
+	}
+	return repo.Changes(base, head)
 }
 
 // Resolve selects reviewable files from changes, honouring ignore globs.

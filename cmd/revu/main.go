@@ -191,7 +191,7 @@ func localScope(repo *vcs.Repo, profile, base, head string, ignore []string) ([]
 	if profile != profiles.PR && profile != profiles.Impact {
 		return nil, nil
 	}
-	changes, err := repo.Changes(base, head)
+	changes, err := scope.ChangesForProfile(repo, profile, base, head)
 	if err != nil {
 		return nil, err
 	}
@@ -331,8 +331,53 @@ func resolveCI(c *commonFlags) ci.Info {
 }
 
 // newStore selects the tracking backend from configuration.
-func newStore(cfg config.Config, stateDir string) (store.Store, func() error, error) {
-	return store.Open(cfg.Store.SQLite, stateDir, cfg.Store.SQLitePath(stateDir))
+func newStore(cfg config.Config, stateDir string, pr int, profile string) (store.Store, func() error, error) {
+	dbPath := cfg.Store.SQLitePath(stateDir)
+	if cfg.Store.SQLite && pr > 0 && strings.TrimSpace(cfg.Store.Path) != "" {
+		dbPath = scopedSQLitePath(cfg.Store.Path, pr, profile)
+	}
+	return store.Open(cfg.Store.SQLite, stateDir, dbPath)
+}
+
+// scopedStateDir keeps lifecycle state per pull request and profile. A shared
+// state file lets one PR or profile mark another's findings resolved.
+func scopedStateDir(base string, pr int, profile string) string {
+	if pr <= 0 {
+		return base
+	}
+	if profile == "" {
+		profile = "default"
+	}
+	return filepath.Join(base, fmt.Sprintf("pr-%d", pr), profile)
+}
+
+// scopedSQLitePath applies the same per-PR/profile isolation when the consumer
+// pins an explicit SQLite file instead of using the state directory default.
+func scopedSQLitePath(path string, pr int, profile string) string {
+	path = strings.TrimSpace(path)
+	if pr <= 0 || path == "" || path == ":memory:" {
+		return path
+	}
+	if profile == "" {
+		profile = "default"
+	}
+	ext := filepath.Ext(path)
+	if ext == "" {
+		return fmt.Sprintf("%s.pr-%d.%s", path, pr, profile)
+	}
+	return fmt.Sprintf("%s.pr-%d.%s%s", strings.TrimSuffix(path, ext), pr, profile, ext)
+}
+
+// stateScope makes the command-line PR authoritative over artifact data. A
+// mismatch is rejected rather than selecting an attacker-controlled state key.
+func stateScope(flagPR, bundlePR int) (int, error) {
+	if flagPR > 0 && bundlePR > 0 && flagPR != bundlePR {
+		return 0, fmt.Errorf("bundle pull request #%d does not match --pr #%d", bundlePR, flagPR)
+	}
+	if flagPR > 0 {
+		return flagPR, nil
+	}
+	return bundlePR, nil
 }
 
 // projectName derives the local project folder name: the repository name when
@@ -431,6 +476,14 @@ func run(args []string) error {
 	cfg.Review.MaxFileBytes = trusted.Review.MaxFileBytes
 	cfg.Review.BlockThreshold = trusted.Review.BlockThreshold
 	cfg.Review.CoverageThreshold = trusted.Review.CoverageThreshold
+	// Batch limits are policy too, but a workflow-controlled action input or
+	// environment override must win over repository configuration.
+	if os.Getenv("REVIEW_MAX_BATCH_FILES") == "" {
+		cfg.Review.MaxBatchFiles = trusted.Review.MaxBatchFiles
+	}
+	if os.Getenv("REVIEW_MAX_BATCH_BYTES") == "" {
+		cfg.Review.MaxBatchBytes = trusted.Review.MaxBatchBytes
+	}
 	if len(trusted.Review.Rubric) > 0 {
 		cfg.Review.Rubric = trusted.Review.Rubric
 	}
@@ -453,7 +506,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	reviewer := reviewers.New(prov, cfg.Provider.Model, cfg.Provider.MaxReasoningTokens, cfg.Provider.SupportsJSONFormat)
+	reviewer := reviewers.NewWithLimits(prov, cfg.Provider.Model, cfg.Provider.MaxReasoningTokens, cfg.Provider.SupportsJSONFormat, cfg.Review.MaxBatchFiles, cfg.Review.MaxBatchBytes)
 
 	// Local mode stores tracking state under the project folder and never
 	// touches GitHub.
@@ -462,11 +515,12 @@ func run(args []string) error {
 	if cfg.Local.Enabled {
 		effectiveStateDir = filepath.Join(cfg.Local.Dir, project)
 	}
+	effectiveStateDir = scopedStateDir(effectiveStateDir, c.pr, c.profile)
 	var st store.Store
 	if cfg.Mode == config.ModeStateless || strings.EqualFold(strings.TrimSpace(cfg.Persist.Mode), "never") || *dryRun {
 		st = store.Stateless{}
 	} else {
-		opened, closeStore, err := newStore(cfg, effectiveStateDir)
+		opened, closeStore, err := newStore(cfg, effectiveStateDir, c.pr, c.profile)
 		if err != nil {
 			return err
 		}
@@ -741,11 +795,15 @@ func finalizeCmd(args []string) error {
 	if err != nil {
 		return err
 	}
+	scopePR, err := stateScope(c.pr, b.PR)
+	if err != nil {
+		return err
+	}
 	var st store.Store
 	if cfg.Mode == config.ModeStateless || *dryRun {
 		st = store.Stateless{}
 	} else {
-		opened, closeStore, err := newStore(cfg, *stateDir)
+		opened, closeStore, err := newStore(cfg, scopedStateDir(*stateDir, scopePR, b.Profile), scopePR, b.Profile)
 		if err != nil {
 			return err
 		}
@@ -755,7 +813,7 @@ func finalizeCmd(args []string) error {
 	eng := engine.New(engine.Options{
 		Config:        cfg,
 		Provider:      prov,
-		Reviewer:      reviewers.New(prov, cfg.Provider.Model, cfg.Provider.MaxReasoningTokens, cfg.Provider.SupportsJSONFormat),
+		Reviewer:      reviewers.NewWithLimits(prov, cfg.Provider.Model, cfg.Provider.MaxReasoningTokens, cfg.Provider.SupportsJSONFormat, cfg.Review.MaxBatchFiles, cfg.Review.MaxBatchBytes),
 		Store:         st,
 		ScopeVerifier: verifier,
 		ArchiveGuard:  guard,
@@ -855,7 +913,7 @@ func issueReview(args []string) error {
 	if cfg.Mode == config.ModeStateless {
 		st = store.Stateless{}
 	} else {
-		opened, closeStore, err := newStore(cfg, *stateDir)
+		opened, closeStore, err := newStore(cfg, *stateDir, 0, "")
 		if err != nil {
 			return err
 		}
@@ -944,7 +1002,7 @@ func plan(args []string) error {
 		c.profile = cfg.Profile
 	}
 	cfg.ApplyProfile(c.profile)
-	changes, err := repo.Changes(c.base, c.head)
+	changes, err := scope.ChangesForProfile(repo, c.profile, c.base, c.head)
 	if err != nil {
 		return err
 	}
@@ -1413,6 +1471,12 @@ func evalCorpus(args []string) error {
 	out := fs.String("out", "", "write the results Markdown to a file")
 	providerName := fs.String("provider", "oracle", "provider: oracle | fake | openai-compatible")
 	model := fs.String("model", "", "model id for a provider-backed evaluation")
+	maxReasoning := fs.Int("max-reasoning-tokens", 0, "max reasoning tokens for the pinned model")
+	maxBatchFiles := fs.Int("max-batch-files", 0, "max files per semantic request (0 = automatic)")
+	maxBatchBytes := fs.Int("max-batch-bytes", 0, "max bytes per semantic request (0 = automatic)")
+	supportsJSON := fs.String("supports-json-format", "", "send response_format=json_object (true|false; empty = provider default)")
+	inputCost := fs.Float64("input-cost-per-mtok", 0, "input cost in USD per million tokens (0 = omit)")
+	outputCost := fs.Float64("output-cost-per-mtok", 0, "output cost in USD per million tokens (0 = omit)")
 	check := fs.Bool("check", false, "exit non-zero unless the corpus meets the release thresholds")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -1420,6 +1484,14 @@ func evalCorpus(args []string) error {
 	fixtures, err := eval.Load(*corpus)
 	if err != nil {
 		return err
+	}
+	var supportsJSONFormat *bool
+	if strings.TrimSpace(*supportsJSON) != "" {
+		v, err := strconv.ParseBool(strings.TrimSpace(*supportsJSON))
+		if err != nil {
+			return fmt.Errorf("--supports-json-format: %w", err)
+		}
+		supportsJSONFormat = &v
 	}
 	var prov provider.Provider
 	switch *providerName {
@@ -1433,15 +1505,25 @@ func evalCorpus(args []string) error {
 			return fmt.Errorf("no API key: set REVIEW_PROVIDER_API_KEY for provider %s", *providerName)
 		}
 		prov, err = provider.New(*providerName, provider.Config{
-			BaseURL: os.Getenv("REVIEW_PROVIDER_BASE_URL"),
-			APIKey:  key,
-			Model:   *model,
+			BaseURL:            os.Getenv("REVIEW_PROVIDER_BASE_URL"),
+			APIKey:             key,
+			Model:              *model,
+			MaxReasoningTokens: *maxReasoning,
+			SupportsJSONFormat: supportsJSONFormat,
 		})
 		if err != nil {
 			return err
 		}
 	}
-	report, err := eval.Run(context.Background(), fixtures, prov)
+	report, err := eval.RunWithOptions(context.Background(), fixtures, prov, eval.Options{
+		Model:              *model,
+		MaxReasoningTokens: *maxReasoning,
+		MaxBatchFiles:      *maxBatchFiles,
+		MaxBatchBytes:      *maxBatchBytes,
+		SupportsJSONFormat: supportsJSONFormat,
+		InputCostPerMTok:   *inputCost,
+		OutputCostPerMTok:  *outputCost,
+	})
 	if err != nil {
 		return err
 	}
@@ -1455,9 +1537,10 @@ func evalCorpus(args []string) error {
 	}
 	if *check {
 		c := report.Counts()
-		if c.P0P1Recall() < 1.0 || c.SeverityAccuracy() < 1.0 || c.FalsePositives > 0 || c.InvalidEvidence > 0 || c.CleanFindings > 0 {
-			return fmt.Errorf("corpus does not meet release thresholds (recall=%.2f severity=%.2f fp=%d invalid=%d clean=%d)",
-				c.P0P1Recall(), c.SeverityAccuracy(), c.FalsePositives, c.InvalidEvidence, c.CleanFindings)
+		if c.Recall() < 1.0 || c.P0P1Recall() < 1.0 || c.SeverityAccuracy() < 1.0 || c.Precision() < 1.0 ||
+			c.FalsePositives > 0 || c.InvalidEvidence > 0 || c.CleanFindings > 0 {
+			return fmt.Errorf("corpus does not meet release thresholds (precision=%.2f recall=%.2f p0p1=%.2f severity=%.2f fp=%d invalid=%d clean=%d)",
+				c.Precision(), c.Recall(), c.P0P1Recall(), c.SeverityAccuracy(), c.FalsePositives, c.InvalidEvidence, c.CleanFindings)
 		}
 	}
 	return nil
