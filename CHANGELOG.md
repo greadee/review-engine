@@ -43,6 +43,10 @@ animal-rank nickname; the release purpose is the theme of the release notes.
 - `audit` and `sprint` scans now honor `ignore` rules and the bundle's file,
   per-file, and total-byte ceilings. Limit hits produce an incomplete result
   instead of a bundle that finalize rejects.
+- `sprint` now reviews files changed in the requested commit range instead of
+  scanning the whole repository.
+- `impact` now expands the range diff to the directories containing changed
+  files, giving it a defined touched-subsystem scope.
 
 ## [1.2.0] - 2026-10-27
 

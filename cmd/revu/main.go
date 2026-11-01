@@ -1008,6 +1008,9 @@ func plan(args []string) error {
 		return err
 	}
 	sc := scope.Resolve(c.profile, changes, cfg.Ignore)
+	if c.profile == profiles.Impact {
+		sc = scope.ResolveImpact(repo, c.head, changes, cfg.Ignore)
+	}
 	fmt.Printf("profile: %s\nbase: %s\nhead: %s\nfiles: %d\n", c.profile, c.base, c.head, len(sc.Files))
 	for _, f := range sc.Files {
 		fmt.Printf("  %s\n", f)

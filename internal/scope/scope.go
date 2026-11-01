@@ -4,6 +4,7 @@ package scope
 
 import (
 	"path"
+	"sort"
 	"strings"
 
 	"github.com/greadee/review-engine/internal/profiles"
@@ -20,14 +21,60 @@ type Scope struct {
 	Files []string
 }
 
-// ChangesForProfile chooses the trusted diff for a profile. The PR profile uses
-// the merge base so a moved base branch does not add reverse changes. Impact,
-// sprint, and whole-repo profiles use the direct two-dot diff they document.
+// ChangesForProfile chooses the trusted diff for a profile. PR uses the merge
+// base so a moved base branch does not add reverse changes. Sprint and impact
+// use the direct two-dot diff of their requested range; audit has no diff and
+// enumerates the repository instead.
 func ChangesForProfile(repo *vcs.Repo, profile, base, head string) ([]vcs.Change, error) {
 	if profile == profiles.PR {
 		return repo.ChangesFromMergeBase(base, head)
 	}
 	return repo.Changes(base, head)
+}
+
+// ResolveImpact expands an impact review to the touched subsystems: the
+// changed files plus every head file under the directory containing a changed
+// file. Root-level files are included only when they changed themselves.
+func ResolveImpact(repo *vcs.Repo, head string, changes []vcs.Change, ignore []string) Scope {
+	s := Resolve(profiles.Impact, changes, ignore)
+	if len(s.Files) == 0 || repo == nil {
+		return s
+	}
+	dirs := map[string]bool{}
+	changed := map[string]bool{}
+	for _, f := range s.Files {
+		changed[f] = true
+		if d := path.Dir(f); d != "." {
+			dirs[d] = true
+		}
+	}
+	all, err := repo.ListFiles(head)
+	if err != nil {
+		return s
+	}
+	seen := map[string]bool{}
+	var files []string
+	for _, f := range all {
+		if f == "" || seen[f] || isIgnored(f, ignore) {
+			continue
+		}
+		include := changed[f]
+		if !include {
+			for d := path.Dir(f); d != "." && d != "/"; d = path.Dir(d) {
+				if dirs[d] {
+					include = true
+					break
+				}
+			}
+		}
+		if include {
+			seen[f] = true
+			files = append(files, f)
+		}
+	}
+	sort.Strings(files)
+	s.Files = files
+	return s
 }
 
 // Resolve selects reviewable files from changes, honouring ignore globs.

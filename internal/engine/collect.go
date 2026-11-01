@@ -40,12 +40,16 @@ func (e *Engine) Collect(ctx context.Context, profile, base, head, repository, r
 	}
 	sc := scope.Resolve(profile, changes, policy.Ignore)
 	allFiles, _ := e.opts.Repo.ListFiles(head)
-	wholeRepo := profile == profiles.Audit || profile == profiles.Sprint
+	wholeRepo := profile == profiles.Audit
+	wideScope := profile == profiles.Audit || profile == profiles.Sprint
 	if wholeRepo {
 		// Whole-repo scans must honor ignore rules just like diff scans. The
 		// filtered list is also the reference context for analyzers.
 		allFiles = scope.FilterPaths(allFiles, policy.Ignore)
 		sc.Files = allFiles
+	}
+	if profile == profiles.Impact {
+		sc = scope.ResolveImpact(e.opts.Repo, head, changes, policy.Ignore)
 	}
 	if !wholeRepo && len(changes) > 0 && len(sc.Files) == 0 {
 		return bundle.Bundle{}, fmt.Errorf("engine: the trusted review policy selected no files from %d changed file(s); refusing to produce an empty review", len(changes))
@@ -70,7 +74,7 @@ func (e *Engine) Collect(ctx context.Context, profile, base, head, repository, r
 		}
 	}
 
-	maxFiles, maxBytes, maxTotalBytes := reviewLimits(policy, profile, wholeRepo)
+	maxFiles, maxBytes, maxTotalBytes := reviewLimits(policy, profile, wideScope)
 	gathered := e.gather(head, sc.Files, maxFiles, maxBytes, maxTotalBytes)
 	return bundle.Bundle{
 		Version:        bundle.Version,

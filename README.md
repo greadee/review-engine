@@ -203,9 +203,14 @@ Useful flags: `--dry-run` (fake provider, no GitHub writes), `--static=false`,
 |---|---|---|---|
 | `pr` | PR number | `base..head` diff | Review summary |
 | `issue` | issue / `Closes #n` | acceptance criteria + linked work | Criteria checklist |
-| `sprint` | commit range | all commits in range | Audit-style summary |
+| `sprint` | commit range | files changed in the range | Audit-style summary |
 | `audit` | branch | whole repo | Audit findings |
-| `impact` | commit range | touched subsystems | Regression / orphan findings |
+| `impact` | commit range | changed files + files in their directories | Regression / orphan findings |
+
+`pr` uses the merge base. `sprint` is range-based and does not scan the whole
+repository. `impact` expands a range diff to the directories that contain
+changed files; a changed root-level file is included by itself. `issue` has no
+file scope because it evaluates acceptance criteria and linked work.
 
 ## Configuration
 

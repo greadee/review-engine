@@ -452,20 +452,27 @@ func TestCoverageIncompleteOnLargePR(t *testing.T) {
 	}
 }
 
-// TestAuditSprintProfilesIgnoreMaxFiles is the regression test for #12:
-// whole-repo profiles (audit/sprint) must not hit the maxFiles cap, so they
-// don't always report INCOMPLETE coverage.
-func TestAuditSprintProfilesIgnoreMaxFiles(t *testing.T) {
+// TestAuditAndSprintUseWideLimits covers #12 and C-08: whole-repo audit and
+// range-based sprint scans must not inherit the PR maxFiles=60 cap.
+func TestAuditAndSprintUseWideLimits(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init", "-q")
 
-	// Create 120 files (well above the default maxFiles=60).
+	// Create 120 files (well above the default maxFiles=60) in the base.
 	for i := 0; i < 120; i++ {
 		writeFile(t, dir, fmt.Sprintf("pkg/f%03d.go", i), fmt.Sprintf("package pkg\n\nvar V%03d = %d\n", i, i))
 	}
 	git(t, dir, "add", ".")
 	git(t, dir, "commit", "-q", "-m", "base")
 	base := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	// The sprint range must contain all 120 changed files.
+	for i := 0; i < 120; i++ {
+		writeFile(t, dir, fmt.Sprintf("pkg/f%03d.go", i), fmt.Sprintf("package pkg\n\nvar V%03d = %d\nvar W%03d = %d\n", i, i, i, i+1))
+	}
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "head")
+	head := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
 
 	cfg := config.Default()
 	cfg.Review.Static = false
@@ -475,7 +482,7 @@ func TestAuditSprintProfilesIgnoreMaxFiles(t *testing.T) {
 	eng := New(Options{Config: cfg, Repo: repo, Store: store.Stateless{}})
 
 	// Audit profile: should analyze ALL files, not stop at 60.
-	res, err := eng.RunRange(context.Background(), "audit", base, base, "o/r", "HEAD")
+	res, err := eng.RunRange(context.Background(), "audit", base, head, "o/r", "HEAD")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,8 +496,8 @@ func TestAuditSprintProfilesIgnoreMaxFiles(t *testing.T) {
 		t.Fatalf("audit coverage with 120 files must be complete, got %+v", res.Run.Coverage)
 	}
 
-	// Sprint profile: same behavior.
-	res2, err := eng.RunRange(context.Background(), "sprint", base, base, "o/r", "HEAD")
+	// Sprint profile: same wide limit, but scoped to the commit range.
+	res2, err := eng.RunRange(context.Background(), "sprint", base, head, "o/r", "HEAD")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -654,6 +661,13 @@ func TestAuditSprintHonorIgnoreRules(t *testing.T) {
 	git(t, dir, "commit", "-q", "-m", "base")
 	base := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
 
+	writeFile(t, dir, "pkg/keep.go", "package pkg\n\nvar Keep = 2\n")
+	writeFile(t, dir, "vendor/skip.go", "package vendor\n\nvar Skip = 2\n")
+	writeFile(t, dir, "docs/skip.md", "ignored docs v2\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "head")
+	head := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
 	cfg := config.Default()
 	cfg.Review.Static = false
 	cfg.Review.Semantic = false
@@ -662,7 +676,7 @@ func TestAuditSprintHonorIgnoreRules(t *testing.T) {
 	eng := New(Options{Config: cfg, Repo: repo, Store: store.Stateless{}})
 
 	for _, profile := range []string{"audit", "sprint"} {
-		res, err := eng.RunRange(context.Background(), profile, base, base, "o/r", "HEAD")
+		res, err := eng.RunRange(context.Background(), profile, base, head, "o/r", "HEAD")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -734,5 +748,72 @@ func TestGatherEnforcesTotalByteLimit(t *testing.T) {
 	total := len(g.files[0].Content) + len(g.files[1].Content)
 	if total > 6 {
 		t.Fatalf("gathered %d bytes, exceeds total cap 6", total)
+	}
+}
+
+func TestSprintUsesCommitRangeNotWholeRepo(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q")
+	writeFile(t, dir, "pkg/changed.go", "package pkg\n\nvar Changed = 1\n")
+	writeFile(t, dir, "pkg/unchanged.go", "package pkg\n\nvar Unchanged = 1\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "base")
+	base := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+	writeFile(t, dir, "pkg/changed.go", "package pkg\n\nvar Changed = 2\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "head")
+	head := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	cfg := config.Default()
+	cfg.Review.Static = false
+	cfg.Review.Semantic = false
+	repo, _ := vcs.Open(dir)
+	eng := New(Options{Config: cfg, Repo: repo, Store: store.Stateless{}})
+
+	sprint, err := eng.RunRange(context.Background(), "sprint", base, head, "o/r", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sprint.Run.Coverage.Selected != 1 {
+		t.Fatalf("sprint selected %d files, want only the 1 changed file", sprint.Run.Coverage.Selected)
+	}
+
+	audit, err := eng.RunRange(context.Background(), "audit", base, head, "o/r", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if audit.Run.Coverage.Selected != 2 {
+		t.Fatalf("audit selected %d files, want both repository files", audit.Run.Coverage.Selected)
+	}
+}
+
+func TestImpactExpandsTouchedSubsystems(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q")
+	writeFile(t, dir, "api/handler.go", "package api\n\nvar Handler = 1\n")
+	writeFile(t, dir, "api/other.go", "package api\n\nvar Other = 1\n")
+	writeFile(t, dir, "internal/engine/core.go", "package engine\n\nvar Core = 1\n")
+	writeFile(t, dir, "root.go", "package root\n\nvar Root = 1\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "base")
+	base := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+	writeFile(t, dir, "api/handler.go", "package api\n\nvar Handler = 2\n")
+	writeFile(t, dir, "root.go", "package root\n\nvar Root = 2\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "head")
+	head := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	cfg := config.Default()
+	cfg.Review.Static = false
+	cfg.Review.Semantic = false
+	repo, _ := vcs.Open(dir)
+	eng := New(Options{Config: cfg, Repo: repo, Store: store.Stateless{}})
+
+	res, err := eng.RunRange(context.Background(), "impact", base, head, "o/r", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Run.Coverage.Selected != 3 {
+		t.Fatalf("impact selected %d files, want changed files plus the touched api directory", res.Run.Coverage.Selected)
 	}
 }

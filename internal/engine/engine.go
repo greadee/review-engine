@@ -134,12 +134,12 @@ type gatherStats struct {
 // reviewLimits keeps collect inside the bundle's validation limits. Whole-repo
 // profiles use the bundle file ceiling unless a per-profile maxFiles override
 // explicitly asks for a smaller scan.
-func reviewLimits(policy config.Config, profile string, wholeRepo bool) (maxFiles, maxBytes, maxTotalBytes int) {
+func reviewLimits(policy config.Config, profile string, wideScope bool) (maxFiles, maxBytes, maxTotalBytes int) {
 	maxFiles = policy.Review.MaxFiles
 	if maxFiles <= 0 {
 		maxFiles = 60
 	}
-	if wholeRepo {
+	if wideScope {
 		maxFiles = bundle.MaxFiles
 		if override, ok := policy.Profiles[profile]; ok && override.MaxFiles > 0 {
 			maxFiles = override.MaxFiles
