@@ -643,3 +643,96 @@ func TestCollectUsesMergeBaseForPR(t *testing.T) {
 		t.Fatalf("collect used the wrong scope: %+v", b.Files)
 	}
 }
+
+func TestAuditSprintHonorIgnoreRules(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q")
+	writeFile(t, dir, "pkg/keep.go", "package pkg\n\nvar Keep = 1\n")
+	writeFile(t, dir, "vendor/skip.go", "package vendor\n\nvar Skip = 1\n")
+	writeFile(t, dir, "docs/skip.md", "ignored docs\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "base")
+	base := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	cfg := config.Default()
+	cfg.Review.Static = false
+	cfg.Review.Semantic = false
+	cfg.Ignore = []string{"vendor/**", "docs/**"}
+	repo, _ := vcs.Open(dir)
+	eng := New(Options{Config: cfg, Repo: repo, Store: store.Stateless{}})
+
+	for _, profile := range []string{"audit", "sprint"} {
+		res, err := eng.RunRange(context.Background(), profile, base, base, "o/r", "HEAD")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Run.Coverage.Selected != 1 {
+			t.Fatalf("%s selected %d files, want 1 after ignore rules", profile, res.Run.Coverage.Selected)
+		}
+		if !res.Run.Coverage.Complete() {
+			t.Fatalf("%s coverage should be complete: %+v", profile, res.Run.Coverage)
+		}
+	}
+}
+
+func TestWholeRepoBundleStaysWithinValidationLimits(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q")
+	count := bundle.MaxFiles + 1
+	for i := 0; i < count; i++ {
+		writeFile(t, dir, fmt.Sprintf("pkg/f%04d.go", i), fmt.Sprintf("package pkg\n\nvar V%04d = %d\n", i, i))
+	}
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "base")
+	base := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	cfg := config.Default()
+	cfg.Review.Static = false
+	cfg.Review.Semantic = false
+	repo, _ := vcs.Open(dir)
+	eng := New(Options{Config: cfg, Repo: repo, Store: store.Stateless{}})
+
+	b, err := eng.Collect(context.Background(), "audit", base, base, "o/r", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Files) > bundle.MaxFiles {
+		t.Fatalf("bundle has %d files, exceeds limit %d", len(b.Files), bundle.MaxFiles)
+	}
+	if b.Skipped == 0 {
+		t.Fatal("expected skipped files above the bundle file cap")
+	}
+	if err := b.Validate(); err != nil {
+		t.Fatalf("collect produced a bundle finalize would reject: %v", err)
+	}
+	res, err := eng.Finalize(context.Background(), b)
+	if err != nil {
+		t.Fatalf("finalize rejected the capped bundle: %v", err)
+	}
+	if res.Run.Coverage.Complete() {
+		t.Fatalf("capped whole-repo scan must be incomplete: %+v", res.Run.Coverage)
+	}
+}
+
+func TestGatherEnforcesTotalByteLimit(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q")
+	writeFile(t, dir, "a.txt", "abcd")
+	writeFile(t, dir, "b.txt", "efgh")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "base")
+	repo, _ := vcs.Open(dir)
+	eng := New(Options{Repo: repo, Store: store.Stateless{}})
+
+	g := eng.gather("HEAD", []string{"a.txt", "b.txt"}, 10, 100, 6)
+	if len(g.files) != 2 || g.files[1].Content != "ef" {
+		t.Fatalf("unexpected gathered files: %+v", g.files)
+	}
+	if g.truncated != 1 || g.truncatedBytes != 2 {
+		t.Fatalf("unexpected truncation accounting: %+v", g)
+	}
+	total := len(g.files[0].Content) + len(g.files[1].Content)
+	if total > 6 {
+		t.Fatalf("gathered %d bytes, exceeds total cap 6", total)
+	}
+}

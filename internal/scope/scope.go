@@ -51,6 +51,21 @@ func Resolve(profile string, changes []vcs.Change, ignore []string) Scope {
 	return s
 }
 
+// FilterPaths applies ignore globs to a whole-repo file list. It preserves
+// input order, removes duplicates, and never returns an empty path.
+func FilterPaths(paths, ignore []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, p := range paths {
+		if p == "" || seen[p] || isIgnored(p, ignore) {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return out
+}
+
 func isIgnored(p string, patterns []string) bool {
 	for _, pattern := range patterns {
 		if match(pattern, p) {

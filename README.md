@@ -288,6 +288,13 @@ numbers.
   (default `1.0`). Lower it to accept partial coverage; raise `maxFiles` /
   `maxFileBytes` to actually cover more.
 
+Whole-repository `audit` and `sprint` scans honor `ignore` rules and use the
+bundle's resource ceilings rather than the PR file cap: at most 2,000 files,
+1 MiB per file, and 48 MiB total content. A per-profile `maxFiles` override can
+lower the file count. Hitting a ceiling records skipped or truncated files and
+produces an honest `Incomplete` result; collect never emits a bundle that
+finalize rejects for exceeding those limits.
+
 Each semantic request is bounded independently by `review.maxBatchFiles`
 (action input `max-batch-files`, env `REVIEW_MAX_BATCH_FILES`) and
 `review.maxBatchBytes` (action input `max-batch-bytes`, env

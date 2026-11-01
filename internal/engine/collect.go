@@ -42,6 +42,9 @@ func (e *Engine) Collect(ctx context.Context, profile, base, head, repository, r
 	allFiles, _ := e.opts.Repo.ListFiles(head)
 	wholeRepo := profile == profiles.Audit || profile == profiles.Sprint
 	if wholeRepo {
+		// Whole-repo scans must honor ignore rules just like diff scans. The
+		// filtered list is also the reference context for analyzers.
+		allFiles = scope.FilterPaths(allFiles, policy.Ignore)
 		sc.Files = allFiles
 	}
 	if !wholeRepo && len(changes) > 0 && len(sc.Files) == 0 {
@@ -67,7 +70,8 @@ func (e *Engine) Collect(ctx context.Context, profile, base, head, repository, r
 		}
 	}
 
-	gathered := e.gather(head, sc.Files, wholeRepo, policy)
+	maxFiles, maxBytes, maxTotalBytes := reviewLimits(policy, profile, wholeRepo)
+	gathered := e.gather(head, sc.Files, maxFiles, maxBytes, maxTotalBytes)
 	return bundle.Bundle{
 		Version:        bundle.Version,
 		Profile:        profile,

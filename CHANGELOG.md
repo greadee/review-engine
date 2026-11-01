@@ -40,6 +40,9 @@ animal-rank nickname; the release purpose is the theme of the release notes.
   that advances after branching no longer adds reverse changes to the review.
 - Lifecycle state is scoped per pull request and profile, and the example
   workflows cache it across runs.
+- `audit` and `sprint` scans now honor `ignore` rules and the bundle's file,
+  per-file, and total-byte ceilings. Limit hits produce an incomplete result
+  instead of a bundle that finalize rejects.
 
 ## [1.2.0] - 2026-10-27
 
