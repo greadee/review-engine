@@ -69,6 +69,15 @@ release. The animal-rank scheme and release-title rule are in
 [`docs/versioning.md`](docs/versioning.md); the release checklist is in
 [`docs/release-process.md`](docs/release-process.md).
 
+## Provider robustness
+
+Provider requests carry an explicit `max_tokens` budget. Responses larger than
+8 MiB are rejected before decoding, and model JSON extraction is bounded to a
+1 MiB input, a 256 KiB candidate object, and a fixed number of candidate
+objects. Context cancellation stops semantic batching and is returned to the
+caller rather than recorded as a clean review. Retry exhaustion carries
+`provider.ErrRetryExhausted`, so callers can distinguish it from an empty result.
+
 ## Issue review
 
 The `issue` profile extracts acceptance criteria (checkboxes, or list items under

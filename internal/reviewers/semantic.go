@@ -5,6 +5,7 @@ package reviewers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -105,6 +106,9 @@ func (s *Semantic) Review(ctx context.Context, in Input) ([]findings.Finding, Co
 	if s.Provider == nil {
 		return nil, Coverage{}, fmt.Errorf("reviewer: provider is required")
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, Coverage{}, fmt.Errorf("reviewer: %w", err)
+	}
 	if len(in.Files) == 0 {
 		return nil, Coverage{}, nil
 	}
@@ -112,6 +116,9 @@ func (s *Semantic) Review(ctx context.Context, in Input) ([]findings.Finding, Co
 	var out []findings.Finding
 	cov := Coverage{Batches: len(batches)}
 	for _, batch := range batches {
+		if err := ctx.Err(); err != nil {
+			return out, cov, fmt.Errorf("reviewer: %w", err)
+		}
 		req := provider.Request{
 			Model:              s.Model,
 			MaxTokens:          s.MaxTokens,
@@ -126,6 +133,9 @@ func (s *Semantic) Review(ctx context.Context, in Input) ([]findings.Finding, Co
 		}
 		resp, err := s.Provider.Complete(ctx, req)
 		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return out, cov, fmt.Errorf("reviewer: %w", err)
+			}
 			cov.Failed++
 			cov.Errors = append(cov.Errors, err.Error())
 			continue
@@ -224,25 +234,38 @@ func severity(s string) findings.Severity {
 	return findings.P2
 }
 
+const (
+	maxParseBytes      = 1 << 20
+	maxJSONBytes       = 256 << 10
+	maxParseCandidates = 64
+)
+
 func parseOutput(text string) (modelOutput, error) {
 	text = strings.TrimSpace(text)
 	text = strings.TrimPrefix(text, "```json")
 	text = strings.TrimPrefix(text, "```")
 	text = strings.TrimSuffix(text, "```")
+	if len(text) > maxParseBytes {
+		return modelOutput{}, fmt.Errorf("reviewer: model output exceeds %d bytes", maxParseBytes)
+	}
 
-	// For reasoning models the text may contain reasoning discussion before
-	// the JSON.  Search for the last valid JSON object rather than blindly
-	// taking the first "{" to the last "}" (which can span reasoning text
-	// and produce invalid JSON).
-	for i := len(text) - 1; i >= 0; i-- {
+	// Reasoning models may put prose before the JSON. Search backwards for the
+	// last valid object, but bound the number and size of candidates so hostile
+	// output cannot make extraction quadratic or unbounded.
+	attempts := 0
+	for i := len(text) - 1; i >= 0 && attempts < maxParseCandidates; i-- {
 		if text[i] != '}' {
 			continue
 		}
-		// Look for the matching "{" before this "}"
-		for j := i - 1; j >= 0; j-- {
+		startLimit := i - maxJSONBytes
+		if startLimit < 0 {
+			startLimit = 0
+		}
+		for j := i - 1; j >= startLimit && attempts < maxParseCandidates; j-- {
 			if text[j] != '{' {
 				continue
 			}
+			attempts++
 			candidate := text[j : i+1]
 			var out modelOutput
 			if json.Unmarshal([]byte(candidate), &out) == nil {
@@ -250,7 +273,7 @@ func parseOutput(text string) (modelOutput, error) {
 			}
 		}
 	}
-	return modelOutput{}, fmt.Errorf("reviewer: model returned no JSON object")
+	return modelOutput{}, fmt.Errorf("reviewer: model returned no bounded JSON object")
 }
 
 func zero() *float64 {

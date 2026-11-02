@@ -3,9 +3,11 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -268,10 +270,49 @@ func TestOpenAICompleteExhaustsRetries(t *testing.T) {
 
 	p := NewOpenAI(Config{BaseURL: srv.URL, APIKey: "k", Model: "m"})
 	p.sleep = func(context.Context, time.Duration) error { return nil }
-	if _, err := p.Complete(context.Background(), Request{Messages: []Message{{Role: "user", Content: "hi"}}}); err == nil {
-		t.Fatal("expected retry exhaustion error")
+	_, err := p.Complete(context.Background(), Request{Messages: []Message{{Role: "user", Content: "hi"}}})
+	if !errors.Is(err, ErrRetryExhausted) {
+		t.Fatalf("expected ErrRetryExhausted, got %v", err)
 	}
 	if calls != p.maxAttempts {
 		t.Fatalf("expected %d attempts, got %d", p.maxAttempts, calls)
+	}
+}
+
+func TestOpenAICompleteRejectsOversizedResponse(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_, _ = io.WriteString(w, strings.Repeat("x", MaxResponseBytes+1))
+	}))
+	defer srv.Close()
+
+	p := NewOpenAI(Config{BaseURL: srv.URL, APIKey: "k", Model: "m"})
+	_, err := p.Complete(context.Background(), Request{Messages: []Message{{Role: "user", Content: "hi"}}})
+	if err == nil || !strings.Contains(err.Error(), "response exceeds") {
+		t.Fatalf("expected oversized response error, got %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("oversized response should not be retried, got %d calls", calls)
+	}
+}
+
+func TestOpenAICompleteHonorsContextCancellation(t *testing.T) {
+	started := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		time.Sleep(100 * time.Millisecond)
+		_, _ = io.WriteString(w, `{"model":"m","choices":[{"message":{"content":"ok"}}]}`)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-started
+		cancel()
+	}()
+	p := NewOpenAI(Config{BaseURL: srv.URL, APIKey: "k", Model: "m"})
+	if _, err := p.Complete(ctx, Request{Messages: []Message{{Role: "user", Content: "hi"}}}); err == nil {
+		t.Fatal("expected cancellation error")
 	}
 }
