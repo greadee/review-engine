@@ -338,8 +338,14 @@ detectors that catch code which compiles and passes tests but is still wrong:
 | `detector.fail-open` | Nil-guarded checks where a missing dependency silently disables the guard |
 | `detector.unfinished` | TODO/FIXME/XXX markers and not-implemented code paths |
 
-They run as analyzers: for a PR they inspect changed files (with the whole repo as
-reference context); for audit/sprint they scan the whole repository.
+They run as analyzers: for a PR, impact, or sprint they inspect the selected
+files (with the whole repo as reference context); for audit they scan the whole
+repository.
+
+Static analyzer subprocesses run with a scrubbed environment and a two-minute
+timeout. Go build/vet checks are scoped to the changed packages for diff
+profiles. A missing tool is recorded as an analyzer coverage gap, which makes
+the result incomplete rather than silently approving it.
 
 ## Findings
 

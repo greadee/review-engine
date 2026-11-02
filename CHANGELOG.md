@@ -47,6 +47,10 @@ animal-rank nickname; the release purpose is the theme of the release notes.
   scanning the whole repository.
 - `impact` now expands the range diff to the directories containing changed
   files, giving it a defined touched-subsystem scope.
+- Static analyzer subprocesses now have a two-minute timeout. Go vet/build is
+  scoped to changed packages, gofmt handles unusual filenames safely, and
+  missing tools produce an analyzer coverage gap that makes the result
+  incomplete.
 
 ## [1.2.0] - 2026-10-27
 

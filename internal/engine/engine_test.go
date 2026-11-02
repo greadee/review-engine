@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/greadee/review-engine/internal/analyzers"
 	"github.com/greadee/review-engine/internal/bundle"
 	"github.com/greadee/review-engine/internal/config"
 	"github.com/greadee/review-engine/internal/findings"
@@ -815,5 +816,56 @@ func TestImpactExpandsTouchedSubsystems(t *testing.T) {
 	}
 	if res.Run.Coverage.Selected != 3 {
 		t.Fatalf("impact selected %d files, want changed files plus the touched api directory", res.Run.Coverage.Selected)
+	}
+}
+
+type unavailableAnalyzer struct{}
+
+func (unavailableAnalyzer) Name() string { return "unavailable" }
+func (unavailableAnalyzer) Analyze(context.Context, analyzers.Target) ([]findings.Finding, error) {
+	return nil, fmt.Errorf("%w: missing-tool", analyzers.ErrUnavailable)
+}
+
+func TestAnalyzerGapMakesCoverageIncomplete(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q")
+	writeFile(t, dir, "a.go", "package a\n\nvar A = 1\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "base")
+	base := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	cfg := config.Default()
+	cfg.Review.Static = true
+	cfg.Review.Semantic = false
+	repo, _ := vcs.Open(dir)
+	eng := New(Options{
+		Config:    cfg,
+		Repo:      repo,
+		Analyzers: []analyzers.Analyzer{unavailableAnalyzer{}},
+		Store:     store.Stateless{},
+	})
+
+	b, err := eng.Collect(context.Background(), "audit", base, base, "o/r", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.AnalyzerGaps) == 0 {
+		t.Fatal("expected an analyzer coverage gap")
+	}
+	if err := b.Validate(); err != nil {
+		t.Fatalf("analyzer gap bundle invalid: %v", err)
+	}
+	res, err := eng.Finalize(context.Background(), b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Run.Coverage.Complete() {
+		t.Fatalf("analyzer gap must make coverage incomplete: %+v", res.Run.Coverage)
+	}
+	if len(res.Run.Coverage.AnalyzerGaps) == 0 {
+		t.Fatal("finalize dropped analyzer gap details")
+	}
+	if !strings.Contains(res.Run.Recommendation(), "Incomplete") {
+		t.Fatalf("unexpected recommendation %q", res.Run.Recommendation())
 	}
 }

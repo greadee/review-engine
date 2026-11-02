@@ -31,8 +31,12 @@ issues.
 
 - **Analyzers may use the network.** The static analyzers run the repository's
   build tooling (`go build`/`go vet`, `ruff`, `tsc`) during collect, which can
-  fetch dependencies or a `toolchain` declared in `go.mod`. For untrusted pull
-  requests use the two-phase flow so this runs in the secret-free job.
+  fetch dependencies or a `toolchain` declared in `go.mod`. Subprocesses have a
+  two-minute timeout and a scrubbed environment; Go checks are scoped to changed
+  packages for diff profiles. Missing tooling is reported as an analyzer
+  coverage gap, which makes the result incomplete instead of silently approving.
+  For untrusted pull requests use the two-phase flow so this runs in the
+  secret-free job.
 
 - **Trusted collect policy.** `collect` reads `revu.yaml` from the base revision,
   not the pull-request checkout. A PR cannot change ignore rules, static/semantic
