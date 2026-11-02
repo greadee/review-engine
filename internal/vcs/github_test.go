@@ -197,24 +197,17 @@ func TestDoRetriesOnRateLimitAndServerErrors(t *testing.T) {
 }
 
 func TestNewGitHubUsesConfiguredToken(t *testing.T) {
-	var gotAuth string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth = r.Header.Get("Authorization")
-		_, _ = w.Write([]byte(`{"login":"bot"}`))
-	}))
-	defer srv.Close()
-
+	t.Setenv("GITHUB_TOKEN", "env-token")
 	c := NewGitHub("custom-token")
-	c.BaseURL = srv.URL
-	login, err := c.AuthenticatedLogin(context.Background())
-	if err != nil {
-		t.Fatal(err)
+	if c.Token != "custom-token" {
+		t.Fatalf("expected configured token, got %q", c.Token)
 	}
-	if login != "bot" {
-		t.Fatalf("expected login=bot, got %q", login)
+	if got := NewGitHub("").Token; got != "env-token" {
+		t.Fatalf("expected environment token, got %q", got)
 	}
-	if gotAuth != "Bearer custom-token" {
-		t.Fatalf("expected Authorization: Bearer custom-token, got %q", gotAuth)
+	t.Setenv("GITHUB_API_URL", "https://ghe.example/api/v3/")
+	if got := NewGitHub("").BaseURL; got != "https://ghe.example/api/v3" {
+		t.Fatalf("expected GITHUB_API_URL base, got %q", got)
 	}
 }
 

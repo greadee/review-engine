@@ -57,6 +57,10 @@ animal-rank nickname; the release purpose is the theme of the release notes.
 - Provider responses are capped at 8 MiB, JSON extraction is bounded, context
   cancellation stops semantic batches, and retry exhaustion is reported through
   `provider.ErrRetryExhausted` instead of looking like a clean result.
+- `file-issue` and `reconcile` now use the configured GitHub token, `eval`
+  enforces the provider endpoint allowlist, and the CLI constructs GitHub
+  clients through one helper.
+- Removed the unused `/user` authentication API.
 
 ## [1.2.0] - 2026-10-27
 

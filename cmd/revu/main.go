@@ -599,13 +599,12 @@ func run(args []string) error {
 		}
 	}
 
-	ghToken := cfg.GitHubToken
 	// Remote archive: only when the persist policy allowed writing.
 	if !cfg.Local.Enabled && *publish && !*dryRun && res.Persisted {
 		if !hasRepo {
 			return fmt.Errorf("--repository is required to publish")
 		}
-		gh := vcs.NewGitHub(ghToken)
+		gh := newGitHub(cfg)
 		url, err := eng.Publish(context.Background(), gh, owner, name, res)
 		if err != nil {
 			return err
@@ -620,7 +619,7 @@ func run(args []string) error {
 		if !hasRepo {
 			return fmt.Errorf("--repository is required to comment")
 		}
-		gh := vcs.NewGitHub(ghToken)
+		gh := newGitHub(cfg)
 		marker := fmt.Sprintf("<!-- revu:pr=%d -->", c.pr)
 		if err := gh.UpsertComment(context.Background(), owner, name, c.pr, marker, report.SummaryMarkdown(res.Run)); err != nil {
 			return err
@@ -659,6 +658,11 @@ func buildProvider(cfg config.Config, dryRun bool) (provider.Provider, error) {
 		Model:              cfg.Provider.Model,
 		MaxReasoningTokens: cfg.Provider.MaxReasoningTokens,
 	})
+}
+
+// newGitHub is the single CLI construction path for GitHub API clients.
+func newGitHub(cfg config.Config) *vcs.GitHub {
+	return vcs.NewGitHub(cfg.GitHubToken)
 }
 
 // checkProviderEndpoint enforces the trusted provider-endpoint allowlist.
@@ -781,7 +785,7 @@ func finalizeCmd(args []string) error {
 			return err
 		}
 		hasRepo = true
-		gh = vcs.NewGitHub(cfg.GitHubToken)
+		gh = newGitHub(cfg)
 	}
 
 	var verifier engine.ScopeVerifier
@@ -911,7 +915,7 @@ func issueReview(args []string) error {
 		return err
 	}
 	ctx := context.Background()
-	gh := vcs.NewGitHub(cfg.GitHubToken)
+	gh := newGitHub(cfg)
 	issue, err := gh.GetIssue(ctx, owner, name, *issueNum)
 	if err != nil {
 		return err
@@ -1144,6 +1148,10 @@ func fileIssue(args []string) error {
 		return err
 	}
 	resolveCI(&c)
+	cfg, err := loadConfig(c)
+	if err != nil {
+		return err
+	}
 	data, err := os.ReadFile(*in)
 	if err != nil {
 		return err
@@ -1174,7 +1182,7 @@ func fileIssue(args []string) error {
 	if err != nil {
 		return err
 	}
-	num, err := vcs.NewGitHub("").CreateIssue(context.Background(), owner, name, issueTitle, body, labels)
+	num, err := newGitHub(cfg).CreateIssue(context.Background(), owner, name, issueTitle, body, labels)
 	if err != nil {
 		return err
 	}
@@ -1229,7 +1237,7 @@ func reconcile(args []string) error {
 	}
 
 	ctx := context.Background()
-	gh := vcs.NewGitHub("")
+	gh := newGitHub(cfg)
 	resolver := issueEvidenceResolver(gh, owner, name)
 
 	var allFindings []findings.Finding
@@ -1643,6 +1651,11 @@ func evalCorpus(args []string) error {
 		key := os.Getenv("REVIEW_PROVIDER_API_KEY")
 		if key == "" {
 			return fmt.Errorf("no API key: set REVIEW_PROVIDER_API_KEY for provider %s", *providerName)
+		}
+		endpointCfg := config.Default()
+		endpointCfg.Provider.BaseURL = os.Getenv("REVIEW_PROVIDER_BASE_URL")
+		if err := checkProviderEndpoint(endpointCfg); err != nil {
+			return err
 		}
 		prov, err = provider.New(*providerName, provider.Config{
 			BaseURL:            os.Getenv("REVIEW_PROVIDER_BASE_URL"),
