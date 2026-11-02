@@ -437,6 +437,11 @@ SQLite tracking store. See [`sprint-plan.md`](sprint-plan.md).
 
 ## Security
 
+CI gates known vulnerability classes: race-enabled tests, `staticcheck`,
+`govulncheck`, and CodeQL run on every pull request to `main`. Dependabot keeps
+Go modules and GitHub Actions current. Failures block the release; see
+[`docs/release-process.md`](docs/release-process.md).
+
 Report vulnerabilities privately through the repository's Security tab. See
 [`SECURITY.md`](SECURITY.md).
 
