@@ -423,6 +423,8 @@ cost. See [`docs/corpus.md`](docs/corpus.md) for the fixtures, metrics,
 thresholds, methodology, known gaps, and the pinned-model command.
 
 Known constraints are recorded in [`docs/limitations.md`](docs/limitations.md).
+Residual risks, their owners, and target releases are recorded in the
+[residual-risk register](docs/residual-risk-register.md).
 
 ## Status
 
@@ -443,7 +445,9 @@ Go modules and GitHub Actions current. Failures block the release; see
 [`docs/release-process.md`](docs/release-process.md).
 
 Report vulnerabilities privately through the repository's Security tab. See
-[`SECURITY.md`](SECURITY.md).
+[`SECURITY.md`](SECURITY.md). The
+[residual-risk register](docs/residual-risk-register.md) records what the engine
+cannot prove even when its gates pass.
 
 ## License
 

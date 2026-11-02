@@ -2,7 +2,9 @@
 
 These are minor, known constraints of the current engine. They are recorded here
 rather than tracked as work items; the items that need fixing are filed as
-issues.
+issues. Risks that remain even with the documented mitigations, including their
+owners and target releases, are in the
+[residual-risk register](residual-risk-register.md).
 
 - **GitHub Enterprise permalinks.** `blobURL` (`internal/engine/publish.go`)
   rewrites `https://api.github.com` to `https://github.com`. On GitHub

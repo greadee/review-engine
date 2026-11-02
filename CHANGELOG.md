@@ -63,6 +63,8 @@ animal-rank nickname; the release purpose is the theme of the release notes.
 - Removed the unused `/user` authentication API.
 - CI now gates race-enabled tests, `staticcheck`, `govulncheck`, and CodeQL.
   Dependabot covers Go modules and GitHub Actions.
+- Added a residual-risk register with owners and target releases for evidence,
+  model, analyzer, environment, and operational limitations.
 
 ## [1.2.0] - 2026-10-27
 
