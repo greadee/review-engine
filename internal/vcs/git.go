@@ -88,6 +88,17 @@ func (r *Repo) Changes(base, head string) ([]Change, error) {
 	return parseNameStatus(out), nil
 }
 
+// ChangesFromMergeBase lists the changes a pull request introduced relative to
+// the merge base of base and head. It avoids including reverse changes when the
+// base branch has advanced since the pull request branched.
+func (r *Repo) ChangesFromMergeBase(base, head string) ([]Change, error) {
+	mergeBase, err := r.MergeBase(base, head)
+	if err != nil {
+		return nil, err
+	}
+	return r.Changes(mergeBase, head)
+}
+
 func parseNameStatus(out string) []Change {
 	var changes []Change
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {

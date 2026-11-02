@@ -1,8 +1,10 @@
-package io
+package drain
 
 import "io"
 
-func Drain(r io.Reader) []byte {
-	data, _ := io.ReadAll(r) // revu-seed: Reliability P2 swallowed-error
-	return data
+func Close(c io.Closer) error {
+	if err := c.Close(); err != nil {
+		return nil // revu-seed: Reliability P2 swallowed-error
+	}
+	return nil
 }

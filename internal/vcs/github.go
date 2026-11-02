@@ -36,12 +36,14 @@ func NewGitHub(token string) *GitHub {
 
 // PullRequest is the subset of PR metadata the engine uses.
 type PullRequest struct {
-	Number         int    `json:"number"`
-	Title          string `json:"title"`
-	Body           string `json:"body"`
-	State          string `json:"state"`
-	HTMLURL        string `json:"html_url"`
-	MergeCommitSHA string `json:"merge_commit_sha"`
+	Number         int        `json:"number"`
+	Title          string     `json:"title"`
+	Body           string     `json:"body"`
+	State          string     `json:"state"`
+	Merged         bool       `json:"merged"`
+	MergedAt       *time.Time `json:"merged_at"`
+	HTMLURL        string     `json:"html_url"`
+	MergeCommitSHA string     `json:"merge_commit_sha"`
 	Base           struct {
 		Ref string `json:"ref"`
 		SHA string `json:"sha"`
@@ -146,9 +148,34 @@ type Issue struct {
 	Body    string `json:"body"`
 	State   string `json:"state"`
 	HTMLURL string `json:"html_url"`
-	Labels  []struct {
+	// PullRequest is non-nil when the issue number actually refers to a PR.
+	PullRequest *struct {
+		URL string `json:"url"`
+	} `json:"pull_request,omitempty"`
+	Labels []struct {
 		Name string `json:"name"`
 	} `json:"labels"`
+}
+
+// CommitFile is one file changed by a commit.
+type CommitFile struct {
+	Filename string `json:"filename"`
+}
+
+// CommitInfo is the subset of commit metadata the evidence resolver uses.
+type CommitInfo struct {
+	SHA   string       `json:"sha"`
+	Files []CommitFile `json:"files"`
+}
+
+// Commit fetches a commit and its changed files.
+func (c *GitHub) Commit(ctx context.Context, owner, repo, sha string) (CommitInfo, error) {
+	var out CommitInfo
+	path := fmt.Sprintf("/repos/%s/%s/commits/%s", owner, repo, url.PathEscape(sha))
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return CommitInfo{}, err
+	}
+	return out, nil
 }
 
 // GetIssue fetches issue metadata.

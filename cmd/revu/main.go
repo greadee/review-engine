@@ -191,7 +191,7 @@ func localScope(repo *vcs.Repo, profile, base, head string, ignore []string) ([]
 	if profile != profiles.PR && profile != profiles.Impact {
 		return nil, nil
 	}
-	changes, err := repo.Changes(base, head)
+	changes, err := scope.ChangesForProfile(repo, profile, base, head)
 	if err != nil {
 		return nil, err
 	}
@@ -331,8 +331,53 @@ func resolveCI(c *commonFlags) ci.Info {
 }
 
 // newStore selects the tracking backend from configuration.
-func newStore(cfg config.Config, stateDir string) (store.Store, func() error, error) {
-	return store.Open(cfg.Store.SQLite, stateDir, cfg.Store.SQLitePath(stateDir))
+func newStore(cfg config.Config, stateDir string, pr int, profile string) (store.Store, func() error, error) {
+	dbPath := cfg.Store.SQLitePath(stateDir)
+	if cfg.Store.SQLite && pr > 0 && strings.TrimSpace(cfg.Store.Path) != "" {
+		dbPath = scopedSQLitePath(cfg.Store.Path, pr, profile)
+	}
+	return store.Open(cfg.Store.SQLite, stateDir, dbPath)
+}
+
+// scopedStateDir keeps lifecycle state per pull request and profile. A shared
+// state file lets one PR or profile mark another's findings resolved.
+func scopedStateDir(base string, pr int, profile string) string {
+	if pr <= 0 {
+		return base
+	}
+	if profile == "" {
+		profile = "default"
+	}
+	return filepath.Join(base, fmt.Sprintf("pr-%d", pr), profile)
+}
+
+// scopedSQLitePath applies the same per-PR/profile isolation when the consumer
+// pins an explicit SQLite file instead of using the state directory default.
+func scopedSQLitePath(path string, pr int, profile string) string {
+	path = strings.TrimSpace(path)
+	if pr <= 0 || path == "" || path == ":memory:" {
+		return path
+	}
+	if profile == "" {
+		profile = "default"
+	}
+	ext := filepath.Ext(path)
+	if ext == "" {
+		return fmt.Sprintf("%s.pr-%d.%s", path, pr, profile)
+	}
+	return fmt.Sprintf("%s.pr-%d.%s%s", strings.TrimSuffix(path, ext), pr, profile, ext)
+}
+
+// stateScope makes the command-line PR authoritative over artifact data. A
+// mismatch is rejected rather than selecting an attacker-controlled state key.
+func stateScope(flagPR, bundlePR int) (int, error) {
+	if flagPR > 0 && bundlePR > 0 && flagPR != bundlePR {
+		return 0, fmt.Errorf("bundle pull request #%d does not match --pr #%d", bundlePR, flagPR)
+	}
+	if flagPR > 0 {
+		return flagPR, nil
+	}
+	return bundlePR, nil
 }
 
 // projectName derives the local project folder name: the repository name when
@@ -431,6 +476,14 @@ func run(args []string) error {
 	cfg.Review.MaxFileBytes = trusted.Review.MaxFileBytes
 	cfg.Review.BlockThreshold = trusted.Review.BlockThreshold
 	cfg.Review.CoverageThreshold = trusted.Review.CoverageThreshold
+	// Batch limits are policy too, but a workflow-controlled action input or
+	// environment override must win over repository configuration.
+	if os.Getenv("REVIEW_MAX_BATCH_FILES") == "" {
+		cfg.Review.MaxBatchFiles = trusted.Review.MaxBatchFiles
+	}
+	if os.Getenv("REVIEW_MAX_BATCH_BYTES") == "" {
+		cfg.Review.MaxBatchBytes = trusted.Review.MaxBatchBytes
+	}
 	if len(trusted.Review.Rubric) > 0 {
 		cfg.Review.Rubric = trusted.Review.Rubric
 	}
@@ -453,7 +506,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	reviewer := reviewers.New(prov, cfg.Provider.Model, cfg.Provider.MaxReasoningTokens, cfg.Provider.SupportsJSONFormat)
+	reviewer := reviewers.NewWithLimits(prov, cfg.Provider.Model, cfg.Provider.MaxReasoningTokens, cfg.Provider.SupportsJSONFormat, cfg.Review.MaxBatchFiles, cfg.Review.MaxBatchBytes)
 
 	// Local mode stores tracking state under the project folder and never
 	// touches GitHub.
@@ -462,11 +515,12 @@ func run(args []string) error {
 	if cfg.Local.Enabled {
 		effectiveStateDir = filepath.Join(cfg.Local.Dir, project)
 	}
+	effectiveStateDir = scopedStateDir(effectiveStateDir, c.pr, c.profile)
 	var st store.Store
 	if cfg.Mode == config.ModeStateless || strings.EqualFold(strings.TrimSpace(cfg.Persist.Mode), "never") || *dryRun {
 		st = store.Stateless{}
 	} else {
-		opened, closeStore, err := newStore(cfg, effectiveStateDir)
+		opened, closeStore, err := newStore(cfg, effectiveStateDir, c.pr, c.profile)
 		if err != nil {
 			return err
 		}
@@ -741,11 +795,15 @@ func finalizeCmd(args []string) error {
 	if err != nil {
 		return err
 	}
+	scopePR, err := stateScope(c.pr, b.PR)
+	if err != nil {
+		return err
+	}
 	var st store.Store
 	if cfg.Mode == config.ModeStateless || *dryRun {
 		st = store.Stateless{}
 	} else {
-		opened, closeStore, err := newStore(cfg, *stateDir)
+		opened, closeStore, err := newStore(cfg, scopedStateDir(*stateDir, scopePR, b.Profile), scopePR, b.Profile)
 		if err != nil {
 			return err
 		}
@@ -755,7 +813,7 @@ func finalizeCmd(args []string) error {
 	eng := engine.New(engine.Options{
 		Config:        cfg,
 		Provider:      prov,
-		Reviewer:      reviewers.New(prov, cfg.Provider.Model, cfg.Provider.MaxReasoningTokens, cfg.Provider.SupportsJSONFormat),
+		Reviewer:      reviewers.NewWithLimits(prov, cfg.Provider.Model, cfg.Provider.MaxReasoningTokens, cfg.Provider.SupportsJSONFormat, cfg.Review.MaxBatchFiles, cfg.Review.MaxBatchBytes),
 		Store:         st,
 		ScopeVerifier: verifier,
 		ArchiveGuard:  guard,
@@ -855,7 +913,7 @@ func issueReview(args []string) error {
 	if cfg.Mode == config.ModeStateless {
 		st = store.Stateless{}
 	} else {
-		opened, closeStore, err := newStore(cfg, *stateDir)
+		opened, closeStore, err := newStore(cfg, *stateDir, 0, "")
 		if err != nil {
 			return err
 		}
@@ -873,7 +931,8 @@ func issueReview(args []string) error {
 			return string(data), true
 		}
 	}
-	eng := engine.New(engine.Options{Config: cfg, Repo: repo, Store: st})
+	resolver := issueEvidenceResolver(gh, owner, name)
+	eng := engine.New(engine.Options{Config: cfg, Repo: repo, Store: st, IssueResolver: resolver})
 	res, err := eng.RunIssue(ctx, issue)
 	if err != nil {
 		return err
@@ -888,7 +947,7 @@ func issueReview(args []string) error {
 	}
 
 	approved := cfg.IssueReview.VerifiedLabel != "" && hasLabel(issue.Labels, cfg.IssueReview.VerifiedLabel)
-	verdict := issues.EvaluateWithOptions(issue, reader, issues.Options{Approved: approved})
+	verdict := issues.EvaluateWithOptions(issue, reader, issues.Options{Approved: approved, Resolver: resolver})
 	closed := strings.EqualFold(issue.State, "closed")
 	if *comment {
 		marker := fmt.Sprintf("<!-- revu:issue=%d -->", *issueNum)
@@ -944,11 +1003,14 @@ func plan(args []string) error {
 		c.profile = cfg.Profile
 	}
 	cfg.ApplyProfile(c.profile)
-	changes, err := repo.Changes(c.base, c.head)
+	changes, err := scope.ChangesForProfile(repo, c.profile, c.base, c.head)
 	if err != nil {
 		return err
 	}
 	sc := scope.Resolve(c.profile, changes, cfg.Ignore)
+	if c.profile == profiles.Impact {
+		sc = scope.ResolveImpact(repo, c.head, changes, cfg.Ignore)
+	}
 	fmt.Printf("profile: %s\nbase: %s\nhead: %s\nfiles: %d\n", c.profile, c.base, c.head, len(sc.Files))
 	for _, f := range sc.Files {
 		fmt.Printf("  %s\n", f)
@@ -1160,6 +1222,7 @@ func reconcile(args []string) error {
 
 	ctx := context.Background()
 	gh := vcs.NewGitHub("")
+	resolver := issueEvidenceResolver(gh, owner, name)
 
 	var allFindings []findings.Finding
 	if *findingsPath != "" {
@@ -1181,7 +1244,7 @@ func reconcile(args []string) error {
 			return fmt.Errorf("issue #%d: %w", n, err)
 		}
 		approved := cfg.IssueReview.VerifiedLabel != "" && hasLabel(issue.Labels, cfg.IssueReview.VerifiedLabel)
-		verdict := issues.EvaluateWithOptions(issue, reader, issues.Options{Approved: approved})
+		verdict := issues.EvaluateWithOptions(issue, reader, issues.Options{Approved: approved, Resolver: resolver})
 		isClosed := strings.EqualFold(issue.State, "closed")
 
 		// A findings-gated issue stays open when the review found problems in
@@ -1230,7 +1293,7 @@ func reconcile(args []string) error {
 			fmt.Printf("#%d kept open (%s)\n", n, reason)
 			openN++
 			if *comment && !*dryRun {
-				body := reconcileComment(issue, verdict, reader)
+				body := reconcileComment(issue, verdict)
 				if err := gh.UpsertComment(ctx, owner, name, n, fmt.Sprintf("<!-- revu:reconcile=issue-%d -->", n), body); err != nil {
 					return err
 				}
@@ -1246,7 +1309,7 @@ func reconcile(args []string) error {
 	return nil
 }
 
-func reconcileComment(issue vcs.Issue, v issues.Verdict, read issues.DocReader) string {
+func reconcileComment(issue vcs.Issue, v issues.Verdict) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "**Review update** for #%d\n\n", issue.Number)
 	if !v.HasCriteria {
@@ -1254,7 +1317,19 @@ func reconcileComment(issue vcs.Issue, v issues.Verdict, read issues.DocReader) 
 		return b.String()
 	}
 	fmt.Fprintf(&b, "Acceptance criteria: %d/%d verified.\n\n", v.Verified, v.Criteria)
-	unmet := issues.Unmet(issue, read)
+	var unmet []issues.Criterion
+	for _, c := range v.Details {
+		verified := false
+		for _, check := range c.Checks {
+			if check.OK {
+				verified = true
+				break
+			}
+		}
+		if !verified {
+			unmet = append(unmet, c)
+		}
+	}
 	if len(unmet) > 0 {
 		b.WriteString("Outstanding (no verified evidence):\n")
 		for _, c := range unmet {
@@ -1262,7 +1337,12 @@ func reconcileComment(issue vcs.Issue, v issues.Verdict, read issues.DocReader) 
 			if c.Done {
 				box = "x"
 			}
-			fmt.Fprintf(&b, "- [%s] %s\n", box, c.Text)
+			fmt.Fprintf(&b, "- [%s] %s\n", box, report.Sanitize(c.Text))
+			for _, check := range c.Checks {
+				if !check.OK && check.Reason != "" {
+					fmt.Fprintf(&b, "  - `%s`: %s\n", report.Sanitize(check.Ref.Value), report.Sanitize(check.Reason))
+				}
+			}
 		}
 	}
 	b.WriteString("\n_Automated by review-engine._\n")
@@ -1283,10 +1363,120 @@ func relatedFindingsComment(issue vcs.Issue, related []findings.Finding) string 
 		if f.Evidence.Line > 0 {
 			loc = fmt.Sprintf("%s:%d", loc, f.Evidence.Line)
 		}
-		fmt.Fprintf(&b, "- **[%s] %s** — `%s`\n", f.Severity, f.Title, loc)
+		fmt.Fprintf(&b, "- **[%s] %s** — `%s`\n", f.Severity, report.Sanitize(f.Title), report.Sanitize(loc))
 	}
 	b.WriteString("\n_Automated by review-engine._\n")
 	return b.String()
+}
+
+// issueEvidenceResolver validates PR/issue/commit references used as issue
+// acceptance evidence. It resolves references through the GitHub API, checks
+// merged/closed state, and requires referenced work to touch the issue's areas.
+func issueEvidenceResolver(gh *vcs.GitHub, owner, repo string) issues.RefResolver {
+	return func(ctx context.Context, ref issues.EvidenceRef, areas []string) (bool, string) {
+		switch ref.Kind {
+		case issues.EvApproval:
+			return true, "explicit reviewer approval marker"
+		case issues.EvPath:
+			return false, "path evidence is checked against the working tree"
+		case issues.EvRef:
+			value := strings.TrimSpace(ref.Value)
+			if strings.HasPrefix(value, "#") {
+				n, err := strconv.Atoi(strings.TrimPrefix(value, "#"))
+				if err != nil {
+					return false, fmt.Sprintf("invalid issue/PR reference %q", value)
+				}
+				return resolveIssueOrPR(ctx, gh, owner, repo, n, areas)
+			}
+			if !isCommitSHA(value) {
+				return false, fmt.Sprintf("%q is not a PR/issue/commit reference", value)
+			}
+			return resolveCommit(ctx, gh, owner, repo, value, areas)
+		}
+		return false, "unsupported evidence reference"
+	}
+}
+
+func resolveIssueOrPR(ctx context.Context, gh *vcs.GitHub, owner, repo string, number int, areas []string) (bool, string) {
+	issue, err := gh.GetIssue(ctx, owner, repo, number)
+	if err != nil {
+		return false, fmt.Sprintf("#%d does not resolve in %s/%s", number, owner, repo)
+	}
+	if issue.PullRequest != nil {
+		pr, err := gh.PR(ctx, owner, repo, number)
+		if err != nil {
+			return false, fmt.Sprintf("PR #%d does not resolve", number)
+		}
+		if !strings.EqualFold(pr.State, "closed") || (pr.MergedAt == nil && !pr.Merged) {
+			return false, fmt.Sprintf("PR #%d is not merged", number)
+		}
+		files, err := gh.PullRequestFiles(ctx, owner, repo, number)
+		if err != nil {
+			return false, fmt.Sprintf("PR #%d changed files are unavailable", number)
+		}
+		if len(areas) > 0 && !issues.FilesTouchAreas(pullRequestFileNames(files), areas) {
+			return false, fmt.Sprintf("PR #%d does not touch this issue's areas", number)
+		}
+		return true, fmt.Sprintf("PR #%d is merged%s", number, areaNote(areas))
+	}
+	if !strings.EqualFold(issue.State, "closed") {
+		return false, fmt.Sprintf("issue #%d is not closed", number)
+	}
+	refAreas := issues.Areas(issue, nil)
+	if len(areas) > 0 && len(refAreas) > 0 && !issues.AreasOverlap(areas, refAreas) {
+		return false, fmt.Sprintf("issue #%d does not touch this issue's areas", number)
+	}
+	return true, fmt.Sprintf("issue #%d is closed%s", number, areaNote(areas))
+}
+
+func resolveCommit(ctx context.Context, gh *vcs.GitHub, owner, repo, sha string, areas []string) (bool, string) {
+	commit, err := gh.Commit(ctx, owner, repo, sha)
+	if err != nil {
+		return false, fmt.Sprintf("commit %s does not resolve in %s/%s", shortSHA(sha), owner, repo)
+	}
+	files := make([]string, 0, len(commit.Files))
+	for _, f := range commit.Files {
+		files = append(files, f.Filename)
+	}
+	if len(areas) > 0 && !issues.FilesTouchAreas(files, areas) {
+		return false, fmt.Sprintf("commit %s does not touch this issue's areas", shortSHA(commit.SHA))
+	}
+	return true, fmt.Sprintf("commit %s exists%s", shortSHA(commit.SHA), areaNote(areas))
+}
+
+func pullRequestFileNames(files []vcs.PullRequestFile) []string {
+	out := make([]string, 0, len(files))
+	for _, f := range files {
+		out = append(out, f.Filename)
+	}
+	return out
+}
+
+func isCommitSHA(value string) bool {
+	if len(value) < 7 || len(value) > 40 {
+		return false
+	}
+	for _, r := range value {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+func shortSHA(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) > 12 {
+		return value[:12]
+	}
+	return value
+}
+
+func areaNote(areas []string) string {
+	if len(areas) == 0 {
+		return ""
+	}
+	return " and touches " + strings.Join(areas, ", ")
 }
 
 func parseNumbers(s string) ([]int, error) {
@@ -1413,6 +1603,12 @@ func evalCorpus(args []string) error {
 	out := fs.String("out", "", "write the results Markdown to a file")
 	providerName := fs.String("provider", "oracle", "provider: oracle | fake | openai-compatible")
 	model := fs.String("model", "", "model id for a provider-backed evaluation")
+	maxReasoning := fs.Int("max-reasoning-tokens", 0, "max reasoning tokens for the pinned model")
+	maxBatchFiles := fs.Int("max-batch-files", 0, "max files per semantic request (0 = automatic)")
+	maxBatchBytes := fs.Int("max-batch-bytes", 0, "max bytes per semantic request (0 = automatic)")
+	supportsJSON := fs.String("supports-json-format", "", "send response_format=json_object (true|false; empty = provider default)")
+	inputCost := fs.Float64("input-cost-per-mtok", 0, "input cost in USD per million tokens (0 = omit)")
+	outputCost := fs.Float64("output-cost-per-mtok", 0, "output cost in USD per million tokens (0 = omit)")
 	check := fs.Bool("check", false, "exit non-zero unless the corpus meets the release thresholds")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -1420,6 +1616,14 @@ func evalCorpus(args []string) error {
 	fixtures, err := eval.Load(*corpus)
 	if err != nil {
 		return err
+	}
+	var supportsJSONFormat *bool
+	if strings.TrimSpace(*supportsJSON) != "" {
+		v, err := strconv.ParseBool(strings.TrimSpace(*supportsJSON))
+		if err != nil {
+			return fmt.Errorf("--supports-json-format: %w", err)
+		}
+		supportsJSONFormat = &v
 	}
 	var prov provider.Provider
 	switch *providerName {
@@ -1433,15 +1637,25 @@ func evalCorpus(args []string) error {
 			return fmt.Errorf("no API key: set REVIEW_PROVIDER_API_KEY for provider %s", *providerName)
 		}
 		prov, err = provider.New(*providerName, provider.Config{
-			BaseURL: os.Getenv("REVIEW_PROVIDER_BASE_URL"),
-			APIKey:  key,
-			Model:   *model,
+			BaseURL:            os.Getenv("REVIEW_PROVIDER_BASE_URL"),
+			APIKey:             key,
+			Model:              *model,
+			MaxReasoningTokens: *maxReasoning,
+			SupportsJSONFormat: supportsJSONFormat,
 		})
 		if err != nil {
 			return err
 		}
 	}
-	report, err := eval.Run(context.Background(), fixtures, prov)
+	report, err := eval.RunWithOptions(context.Background(), fixtures, prov, eval.Options{
+		Model:              *model,
+		MaxReasoningTokens: *maxReasoning,
+		MaxBatchFiles:      *maxBatchFiles,
+		MaxBatchBytes:      *maxBatchBytes,
+		SupportsJSONFormat: supportsJSONFormat,
+		InputCostPerMTok:   *inputCost,
+		OutputCostPerMTok:  *outputCost,
+	})
 	if err != nil {
 		return err
 	}
@@ -1455,9 +1669,10 @@ func evalCorpus(args []string) error {
 	}
 	if *check {
 		c := report.Counts()
-		if c.P0P1Recall() < 1.0 || c.SeverityAccuracy() < 1.0 || c.FalsePositives > 0 || c.InvalidEvidence > 0 || c.CleanFindings > 0 {
-			return fmt.Errorf("corpus does not meet release thresholds (recall=%.2f severity=%.2f fp=%d invalid=%d clean=%d)",
-				c.P0P1Recall(), c.SeverityAccuracy(), c.FalsePositives, c.InvalidEvidence, c.CleanFindings)
+		if c.Recall() < 1.0 || c.P0P1Recall() < 1.0 || c.SeverityAccuracy() < 1.0 || c.Precision() < 1.0 ||
+			c.FalsePositives > 0 || c.InvalidEvidence > 0 || c.CleanFindings > 0 {
+			return fmt.Errorf("corpus does not meet release thresholds (precision=%.2f recall=%.2f p0p1=%.2f severity=%.2f fp=%d invalid=%d clean=%d)",
+				c.Precision(), c.Recall(), c.P0P1Recall(), c.SeverityAccuracy(), c.FalsePositives, c.InvalidEvidence, c.CleanFindings)
 		}
 	}
 	return nil

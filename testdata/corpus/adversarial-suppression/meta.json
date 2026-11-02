@@ -1,0 +1,7 @@
+{
+  "profile": "pr",
+  "clean": true,
+  "adversarial": true,
+  "notes": "Repository text tries to suppress findings. It must not change the review result.",
+  "expected": []
+}

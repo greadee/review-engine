@@ -45,16 +45,22 @@ Copy [`examples/fork-safe/finalize.yml`](../examples/fork-safe/finalize.yml). It
 is triggered by `workflow_run`, downloads the artifact, and runs `phase:
 finalize`. It never checks out the pull request, and it binds the artifact to the
 trusted event. It also fetches the base `revu.yaml` and the PR changed-file list
-through the GitHub API to verify that the bundle covers the trusted scope:
+through the GitHub API to verify that the bundle covers the trusted scope. The
+example caches `.review-state` under a per-PR key so lifecycle data survives
+across runs:
 
 ```yaml
 expect-repository: ${{ github.event.workflow_run.repository.full_name }}
-expect-pr: ${{ github.event.workflow_run.pull_requests[0].number }}
+expect-pr: ${{ steps.pr.outputs.number }}
 expect-head: ${{ github.event.workflow_run.head_sha }}
 expect-profile: pr
 base-url: https://api.openai.com/v1
 allowed-base-urls: https://api.openai.com/v1
 ```
+
+The example resolves the PR number in a step before cache/finalize, falling back
+to the commit-associated pull requests API when the `workflow_run` payload omits
+it (as it can for fork PRs).
 
 ## Single-step (trusted changes only)
 

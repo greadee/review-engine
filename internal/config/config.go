@@ -56,6 +56,7 @@ type StoreConfig struct {
 	// SQLite enables the SQLite backend (default false).
 	SQLite bool `yaml:"sqlite"`
 	// Path is the SQLite database path. Empty uses <state-dir>/review.db.
+	// The CLI applies a per-PR suffix to explicit paths when running in a PR scope.
 	Path string `yaml:"path"`
 }
 
@@ -66,6 +67,8 @@ type ProfileOverride struct {
 	Ignore         []string `yaml:"ignore"`
 	MaxFiles       int      `yaml:"maxFiles"`
 	MaxFileBytes   int      `yaml:"maxFileBytes"`
+	MaxBatchFiles  int      `yaml:"maxBatchFiles"`
+	MaxBatchBytes  int      `yaml:"maxBatchBytes"`
 	Static         *bool    `yaml:"static"`
 	Semantic       *bool    `yaml:"semantic"`
 }
@@ -108,6 +111,12 @@ type ReviewConfig struct {
 	MaxFiles int `yaml:"maxFiles"`
 	// MaxFileBytes caps the size of each file sent for review.
 	MaxFileBytes int `yaml:"maxFileBytes"`
+	// MaxBatchFiles caps how many files are sent in one semantic request.
+	// Zero keeps the automatic default (25, or 8 for reasoning models).
+	MaxBatchFiles int `yaml:"maxBatchFiles"`
+	// MaxBatchBytes caps the total source bytes sent in one semantic request.
+	// Zero keeps the automatic default (150000, or 80000 for reasoning models).
+	MaxBatchBytes int `yaml:"maxBatchBytes"`
 	// BlockThreshold is the severity at or above which findings block.
 	BlockThreshold string `yaml:"blockThreshold"`
 	// CoverageThreshold is the minimum fraction (0..1) of selected files that
@@ -258,6 +267,12 @@ func LoadData(data []byte) (Config, error) {
 var PersistModes = []string{"always", "on-findings", "on-risk", "never"}
 
 func (c Config) Validate() error {
+	if c.Review.MaxBatchFiles < 0 {
+		return fmt.Errorf("config: review.maxBatchFiles must be zero (automatic) or positive, got %d", c.Review.MaxBatchFiles)
+	}
+	if c.Review.MaxBatchBytes < 0 {
+		return fmt.Errorf("config: review.maxBatchBytes must be zero (automatic) or positive, got %d", c.Review.MaxBatchBytes)
+	}
 	if c.Review.CoverageThreshold < 0 || c.Review.CoverageThreshold > 1 {
 		return fmt.Errorf("config: review.coverageThreshold must be between 0 and 1, got %v", c.Review.CoverageThreshold)
 	}
@@ -340,6 +355,12 @@ func (c *Config) ApplyProfile(profile string) {
 	if o.MaxFileBytes > 0 {
 		c.Review.MaxFileBytes = o.MaxFileBytes
 	}
+	if o.MaxBatchFiles > 0 {
+		c.Review.MaxBatchFiles = o.MaxBatchFiles
+	}
+	if o.MaxBatchBytes > 0 {
+		c.Review.MaxBatchBytes = o.MaxBatchBytes
+	}
 	if o.Static != nil {
 		c.Review.Static = *o.Static
 	}
@@ -395,6 +416,16 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("REVIEW_COVERAGE_THRESHOLD"); v != "" {
 		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
 			cfg.Review.CoverageThreshold = f
+		}
+	}
+	if v := os.Getenv("REVIEW_MAX_BATCH_FILES"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n >= 0 {
+			cfg.Review.MaxBatchFiles = n
+		}
+	}
+	if v := os.Getenv("REVIEW_MAX_BATCH_BYTES"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n >= 0 {
+			cfg.Review.MaxBatchBytes = n
 		}
 	}
 	if v := os.Getenv("REVIEW_STATIC"); v != "" {

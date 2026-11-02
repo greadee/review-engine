@@ -80,9 +80,17 @@ cites independently checkable evidence:
 
 - a repository path that exists (a linked test or reviewed change), e.g.
   `` `internal/auth/login_test.go` ``;
-- a PR/issue/commit reference (`#123` or a commit SHA); or
+- a PR/issue/commit reference (`#123` or a commit SHA) that resolves through
+  the GitHub API in this repository, is merged (PRs) or closed (issues), and
+  touches the issue's `Areas`; or
 - an explicit `(verified)` / `(approved)` reviewer marker, or the issue carrying
   the configured `issueReview.verifiedLabel`.
+
+Reference validation records why each reference did or did not count. A
+reference is evidence, not proof: the API can show that a PR/commit exists,
+merged, and touched the relevant area, but it cannot prove that the change
+actually satisfies the criterion. A human reviewer remains responsible for that
+judgment.
 
 Consequences:
 
@@ -144,7 +152,7 @@ A review runs in two phases so untrusted code never shares a job with the API ke
 revu collect --profile pr --base origin/main --head HEAD --out bundle.json
 
 # Phase 2 — secrets, never checks out the PR
-revu finalize --bundle bundle.json --repository owner/name --pr 42 --comment --publish
+revu finalize --bundle bundle.json --repository owner/name --pr 42 --expect-pr 42 --comment --publish
 ```
 
 `revu run` is simply collect + finalize in one process. The reusable workflow
@@ -195,9 +203,14 @@ Useful flags: `--dry-run` (fake provider, no GitHub writes), `--static=false`,
 |---|---|---|---|
 | `pr` | PR number | `base..head` diff | Review summary |
 | `issue` | issue / `Closes #n` | acceptance criteria + linked work | Criteria checklist |
-| `sprint` | commit range | all commits in range | Audit-style summary |
+| `sprint` | commit range | files changed in the range | Audit-style summary |
 | `audit` | branch | whole repo | Audit findings |
-| `impact` | commit range | touched subsystems | Regression / orphan findings |
+| `impact` | commit range | changed files + files in their directories | Regression / orphan findings |
+
+`pr` uses the merge base. `sprint` is range-based and does not scan the whole
+repository. `impact` expands a range diff to the directories that contain
+changed files; a changed root-level file is included by itself. `issue` has no
+file scope because it evaluates acceptance criteria and linked work.
 
 ## Configuration
 
@@ -280,17 +293,38 @@ numbers.
   (default `1.0`). Lower it to accept partial coverage; raise `maxFiles` /
   `maxFileBytes` to actually cover more.
 
+Whole-repository `audit` and `sprint` scans honor `ignore` rules and use the
+bundle's resource ceilings rather than the PR file cap: at most 2,000 files,
+1 MiB per file, and 48 MiB total content. A per-profile `maxFiles` override can
+lower the file count. Hitting a ceiling records skipped or truncated files and
+produces an honest `Incomplete` result; collect never emits a bundle that
+finalize rejects for exceeding those limits.
+
+Each semantic request is bounded independently by `review.maxBatchFiles`
+(action input `max-batch-files`, env `REVIEW_MAX_BATCH_FILES`) and
+`review.maxBatchBytes` (action input `max-batch-bytes`, env
+`REVIEW_MAX_BATCH_BYTES`). Leave either at `0` for the automatic default:
+25 files / 150,000 bytes, or 8 files / 80,000 bytes when
+`provider.maxReasoningTokens` is set. Tune these to the model's context window
+and cost budget; they do not change which files are selected for review. In a
+PR-scoped `run`, these limits come from the trusted base revision unless a
+workflow-owned action input or environment override is set.
+
 ### Tracking store
 
 Tracking is on by default and uses the JSON store at `--state-dir`
 (`.review-state`). Set `store.sqlite: true` (or `REVIEW_STORE_SQLITE=true`) to use
 the opt-in SQLite backend, which is pure-Go (no cgo) and stores at
-`<state-dir>/review.db` by default. Both backends implement the same interface and
-hold identical findings. See [`docs/adr/0006-optional-sqlite-store.md`](docs/adr/0006-optional-sqlite-store.md).
+`<state-dir>/review.db` by default. An explicit `store.path` is also scoped per
+PR and profile (`review.pr-<number>.<profile>.db`) so one PR cannot replace
+another PR's state. Both
+backends implement the same interface and hold identical findings. See
+[`docs/adr/0006-optional-sqlite-store.md`](docs/adr/0006-optional-sqlite-store.md).
 
-In CI, `.review-state` is not persisted by the provided workflows yet, so
-lifecycle state is per-job. Persistent CI state and per-PR lifecycle scoping are
-scheduled for 1.3.
+In CI, the example workflows cache `.review-state` per pull request. The CLI
+stores lifecycle state under `.review-state/pr-<number>/<profile>`, so one PR or
+profile cannot mark another's findings resolved. A cold cache starts a fresh
+lifecycle.
 
 ## Detectors
 
@@ -351,14 +385,18 @@ gofmt -l .
 
 `testdata/corpus/` is a seeded PR corpus (correctness, security, reliability,
 test-gap, clean, and prompt-injection fixtures) with agreed release thresholds.
-Run it hermetically with the deterministic oracle provider:
+It covers ignore-instructions, forged-finding, suppression, and
+delimiter-spoofing attacks. Run it hermetically with the deterministic oracle
+provider:
 
 ```bash
 revu eval --corpus testdata/corpus --check
 ```
 
-See [`docs/corpus.md`](docs/corpus.md) for the fixtures, metrics, thresholds, and
-how to run the optional pinned-model evaluation.
+The optional pinned-model evaluation reports precision, recall, severity
+accuracy, false positives, invalid evidence, latency, tokens, and estimated
+cost. See [`docs/corpus.md`](docs/corpus.md) for the fixtures, metrics,
+thresholds, methodology, known gaps, and the pinned-model command.
 
 Known constraints are recorded in [`docs/limitations.md`](docs/limitations.md).
 

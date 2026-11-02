@@ -90,17 +90,19 @@ func TestUnverifiedFindingsDoNotBlock(t *testing.T) {
 
 func TestSanitizeNeutralizesUntrustedText(t *testing.T) {
 	r := Run{BlockThreshold: findings.P1, Findings: []findings.Finding{
-		{Title: "<script>alert(1)</script> @team", Severity: findings.P2, Classification: findings.Bug, Evidence: findings.Evidence{File: "a.go", Line: 1}, Impact: "@here fix <b>"},
+		{Title: "<script>alert(1)</script> @team ![img](https://evil) `breakout`", Severity: findings.P2, Classification: findings.Bug, Evidence: findings.Evidence{File: "a.go` | [x]", Line: 1}, Impact: "@here fix <b>\x00\x1b"},
 	}}
 	md := ReviewMarkdown(r)
-	if strings.Contains(md, "<script>") {
-		t.Fatalf("raw HTML leaked:\n%s", md)
-	}
-	if strings.Contains(md, "@team") || strings.Contains(md, "@here") {
-		t.Fatalf("mentions not defused:\n%s", md)
+	for _, raw := range []string{"<script>", "@team", "@here", "![img]", "`breakout`", "a.go`", "\x00", "\x1b"} {
+		if strings.Contains(md, raw) {
+			t.Fatalf("raw untrusted text %q leaked:\n%s", raw, md)
+		}
 	}
 	if !strings.Contains(md, "&lt;script&gt;") {
 		t.Fatalf("expected escaped HTML:\n%s", md)
+	}
+	if !strings.Contains(md, "!\\[img]") {
+		t.Fatalf("expected Markdown image to be neutralized:\n%s", md)
 	}
 }
 

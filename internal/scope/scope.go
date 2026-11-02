@@ -4,8 +4,10 @@ package scope
 
 import (
 	"path"
+	"sort"
 	"strings"
 
+	"github.com/greadee/review-engine/internal/profiles"
 	"github.com/greadee/review-engine/internal/vcs"
 )
 
@@ -17,6 +19,62 @@ type Scope struct {
 	Changes []vcs.Change
 	// Files are the changed paths selected for review (deleted files excluded).
 	Files []string
+}
+
+// ChangesForProfile chooses the trusted diff for a profile. PR uses the merge
+// base so a moved base branch does not add reverse changes. Sprint and impact
+// use the direct two-dot diff of their requested range; audit has no diff and
+// enumerates the repository instead.
+func ChangesForProfile(repo *vcs.Repo, profile, base, head string) ([]vcs.Change, error) {
+	if profile == profiles.PR {
+		return repo.ChangesFromMergeBase(base, head)
+	}
+	return repo.Changes(base, head)
+}
+
+// ResolveImpact expands an impact review to the touched subsystems: the
+// changed files plus every head file under the directory containing a changed
+// file. Root-level files are included only when they changed themselves.
+func ResolveImpact(repo *vcs.Repo, head string, changes []vcs.Change, ignore []string) Scope {
+	s := Resolve(profiles.Impact, changes, ignore)
+	if len(s.Files) == 0 || repo == nil {
+		return s
+	}
+	dirs := map[string]bool{}
+	changed := map[string]bool{}
+	for _, f := range s.Files {
+		changed[f] = true
+		if d := path.Dir(f); d != "." {
+			dirs[d] = true
+		}
+	}
+	all, err := repo.ListFiles(head)
+	if err != nil {
+		return s
+	}
+	seen := map[string]bool{}
+	var files []string
+	for _, f := range all {
+		if f == "" || seen[f] || isIgnored(f, ignore) {
+			continue
+		}
+		include := changed[f]
+		if !include {
+			for d := path.Dir(f); d != "." && d != "/"; d = path.Dir(d) {
+				if dirs[d] {
+					include = true
+					break
+				}
+			}
+		}
+		if include {
+			seen[f] = true
+			files = append(files, f)
+		}
+	}
+	sort.Strings(files)
+	s.Files = files
+	return s
 }
 
 // Resolve selects reviewable files from changes, honouring ignore globs.
@@ -38,6 +96,21 @@ func Resolve(profile string, changes []vcs.Change, ignore []string) Scope {
 		s.Files = append(s.Files, c.Path)
 	}
 	return s
+}
+
+// FilterPaths applies ignore globs to a whole-repo file list. It preserves
+// input order, removes duplicates, and never returns an empty path.
+func FilterPaths(paths, ignore []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, p := range paths {
+		if p == "" || seen[p] || isIgnored(p, ignore) {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return out
 }
 
 func isIgnored(p string, patterns []string) bool {

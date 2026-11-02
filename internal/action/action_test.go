@@ -225,6 +225,22 @@ func TestNonNumericPRIsRejected(t *testing.T) {
 	}
 }
 
+// TestInvalidBatchLimitIsRejected asserts batch-size inputs are non-negative.
+func TestInvalidBatchLimitIsRejected(t *testing.T) {
+	dir := t.TempDir()
+	revu := writeFakeRevu(t, dir)
+	out, err := runScript(t, dir, map[string]string{
+		"REVU_BIN":                     revu,
+		"REVIEW_INPUT_MAX_BATCH_FILES": "-1",
+	})
+	if err == nil {
+		t.Fatalf("expected non-zero exit for negative max-batch-files, got success\n%s", out)
+	}
+	if !strings.Contains(out, "invalid max-batch-files") {
+		t.Fatalf("expected an 'invalid max-batch-files' message, got:\n%s", out)
+	}
+}
+
 // TestRunFlagsFromBooleans verifies the boolean inputs still map to flags.
 func TestRunFlagsFromBooleans(t *testing.T) {
 	dir := t.TempDir()

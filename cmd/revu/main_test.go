@@ -14,6 +14,8 @@ import (
 
 	"github.com/greadee/review-engine/internal/bundle"
 	"github.com/greadee/review-engine/internal/config"
+	"github.com/greadee/review-engine/internal/findings"
+	"github.com/greadee/review-engine/internal/issues"
 	"github.com/greadee/review-engine/internal/provider"
 	"github.com/greadee/review-engine/internal/vcs"
 )
@@ -300,5 +302,172 @@ func TestCommittedAndStarterConfigsLoad(t *testing.T) {
 	}
 	if _, err := config.LoadData([]byte(starterConfig)); err != nil {
 		t.Fatalf("starter config: %v", err)
+	}
+}
+
+func TestScopedStateDir(t *testing.T) {
+	if got := scopedStateDir(".review-state", 0, "pr"); got != ".review-state" {
+		t.Fatalf("no-PR scope = %q", got)
+	}
+	want := filepath.Join(".review-state", "pr-42", "impact")
+	if got := scopedStateDir(".review-state", 42, "impact"); got != want {
+		t.Fatalf("PR/profile scope = %q, want %q", got, want)
+	}
+}
+
+func TestLocalScopeUsesMergeBase(t *testing.T) {
+	dir := t.TempDir()
+	gitTest(t, dir, "init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, dir, "add", "a.go")
+	gitTest(t, dir, "commit", "-q", "-m", "base")
+
+	gitTest(t, dir, "switch", "-c", "feature")
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n\nvar X = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, dir, "add", "a.go")
+	gitTest(t, dir, "commit", "-q", "-m", "feature")
+	head := gitTest(t, dir, "rev-parse", "HEAD")
+
+	gitTest(t, dir, "switch", "main")
+	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("package a\n\nvar Y = 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, dir, "add", "b.go")
+	gitTest(t, dir, "commit", "-q", "-m", "main advance")
+	baseTip := gitTest(t, dir, "rev-parse", "HEAD")
+
+	repo, err := vcs.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := localScope(repo, "pr", baseTip, head, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "a.go" {
+		t.Fatalf("localScope = %v, want only a.go", got)
+	}
+}
+
+func TestScopedSQLitePath(t *testing.T) {
+	if got := scopedSQLitePath("/tmp/review.db", 42, "pr"); got != "/tmp/review.pr-42.pr.db" {
+		t.Fatalf("db scope = %q", got)
+	}
+	if got := scopedSQLitePath("/tmp/review", 42, "pr"); got != "/tmp/review.pr-42.pr" {
+		t.Fatalf("extensionless db scope = %q", got)
+	}
+	if got := scopedSQLitePath(":memory:", 42, "pr"); got != ":memory:" {
+		t.Fatalf("memory db scope = %q", got)
+	}
+}
+
+func TestStateScopeRejectsMismatchedPR(t *testing.T) {
+	if got, err := stateScope(42, 0); err != nil || got != 42 {
+		t.Fatalf("flag-only scope = %d, %v", got, err)
+	}
+	if got, err := stateScope(0, 42); err != nil || got != 42 {
+		t.Fatalf("bundle-only scope = %d, %v", got, err)
+	}
+	if _, err := stateScope(42, 99); err == nil {
+		t.Fatal("mismatched PR must be rejected")
+	}
+}
+
+func TestIssueEvidenceResolver(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/o/r/issues/12":
+			io.WriteString(w, `{"number":12,"state":"closed","pull_request":{"url":"https://api.github.com/repos/o/r/pulls/12"}}`)
+		case "/repos/o/r/pulls/12":
+			io.WriteString(w, `{"number":12,"state":"closed","merged_at":"2026-10-01T00:00:00Z"}`)
+		case "/repos/o/r/pulls/12/files":
+			io.WriteString(w, `[{"filename":"internal/auth/login.go","status":"modified"}]`)
+		case "/repos/o/r/issues/13":
+			io.WriteString(w, "{\"number\":13,\"state\":\"closed\",\"body\":\"Work in `internal/auth`.\"}")
+		case "/repos/o/r/issues/14":
+			io.WriteString(w, `{"number":14,"state":"open"}`)
+		case "/repos/o/r/issues/15":
+			io.WriteString(w, `{"number":15,"state":"closed","pull_request":{"url":"https://api.github.com/repos/o/r/pulls/15"}}`)
+		case "/repos/o/r/pulls/15":
+			io.WriteString(w, `{"number":15,"state":"closed","merged_at":"2026-10-01T00:00:00Z"}`)
+		case "/repos/o/r/pulls/15/files":
+			io.WriteString(w, `[{"filename":"other/thing.go","status":"modified"}]`)
+		case "/repos/o/r/issues/16":
+			io.WriteString(w, `{"number":16,"state":"open","pull_request":{"url":"https://api.github.com/repos/o/r/pulls/16"}}`)
+		case "/repos/o/r/pulls/16":
+			io.WriteString(w, `{"number":16,"state":"open","merged_at":null}`)
+		case "/repos/o/r/commits/abcdef1":
+			io.WriteString(w, `{"sha":"abcdef1","files":[{"filename":"internal/auth/login.go"}]}`)
+		case "/repos/o/r/commits/1234567":
+			io.WriteString(w, `{"sha":"1234567","files":[{"filename":"other/thing.go"}]}`)
+		case "/repos/o/r/commits/deadbeef":
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	gh := vcs.NewGitHub("token")
+	gh.BaseURL = srv.URL
+	resolver := issueEvidenceResolver(gh, "o", "r")
+	areas := []string{"internal/auth"}
+	cases := []struct {
+		ref    issues.EvidenceRef
+		wantOK bool
+		want   string
+	}{
+		{issues.EvidenceRef{Kind: issues.EvRef, Value: "#12"}, true, "merged"},
+		{issues.EvidenceRef{Kind: issues.EvRef, Value: "#13"}, true, "closed"},
+		{issues.EvidenceRef{Kind: issues.EvRef, Value: "#14"}, false, "not closed"},
+		{issues.EvidenceRef{Kind: issues.EvRef, Value: "#15"}, false, "does not touch"},
+		{issues.EvidenceRef{Kind: issues.EvRef, Value: "#16"}, false, "not merged"},
+		{issues.EvidenceRef{Kind: issues.EvRef, Value: "abcdef1"}, true, "exists"},
+		{issues.EvidenceRef{Kind: issues.EvRef, Value: "1234567"}, false, "does not touch"},
+		{issues.EvidenceRef{Kind: issues.EvRef, Value: "deadbeef"}, false, "does not resolve"},
+	}
+	for _, tc := range cases {
+		ok, reason := resolver(context.Background(), tc.ref, areas)
+		if ok != tc.wantOK || !strings.Contains(reason, tc.want) {
+			t.Errorf("%s: got (%v, %q), want (%v, reason containing %q)", tc.ref.Value, ok, reason, tc.wantOK, tc.want)
+		}
+	}
+}
+
+func TestReconcileCommentSanitizesUntrustedText(t *testing.T) {
+	v := issues.Verdict{
+		Criteria: 1,
+		Details: []issues.Criterion{{
+			Text: "<img src=x> @team `breakout`",
+			Done: true,
+			Checks: []issues.EvidenceCheck{{
+				Ref:    issues.EvidenceRef{Kind: issues.EvRef, Value: "#1`<script>"},
+				Reason: "<b>@here</b>",
+			}},
+		}},
+	}
+	body := reconcileComment(vcs.Issue{Number: 1}, v)
+	for _, raw := range []string{"<img", "@team", "<script>", "<b>", "@here", "`breakout`", "#1`"} {
+		if strings.Contains(body, raw) {
+			t.Fatalf("raw %q leaked into reconcile comment:\n%s", raw, body)
+		}
+	}
+}
+
+func TestRelatedFindingsCommentSanitizesUntrustedText(t *testing.T) {
+	body := relatedFindingsComment(vcs.Issue{Number: 1}, []findings.Finding{{
+		Title:    "<script>@team `breakout`",
+		Severity: findings.P2,
+		Evidence: findings.Evidence{File: "a`b.go", Line: 1},
+	}})
+	for _, raw := range []string{"<script>", "@team", "`breakout`", "a`b.go"} {
+		if strings.Contains(body, raw) {
+			t.Fatalf("raw %q leaked into related-findings comment:\n%s", raw, body)
+		}
 	}
 }

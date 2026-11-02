@@ -12,13 +12,19 @@ Rat, rank #31 = Baiji). The rank number is the version's minor number.
 - **`x.N.x` — rank #N.** For `N` in `1..31`, the minor version is the
   pseudoname at that rank: `1` = Common Rat, `2` = Common Chimpanzee, …,
   `31` = Baiji.
-- **`x.N.P`** — patches within a named line. All work on a line lands as PRs on
-  that line (e.g. every `1.1.x` change is a `1.1` PR) and is released as a patch.
+- **`x.N.0` — Named patch.** The rounded release for animal rank `N`. For
+  example, Common Rat is `v1.1.0` and Common Chimpanzee is `v1.2.0`.
+- **`x.N.P` (P > 0) — increment on the Named patch.** Patches on Common Rat are
+  `v1.1.1`, `v1.1.2`, and so on. Patch numbers never start a new animal line.
 - After `x.31.x` (Baiji) the line is exhausted: roll to `(x+1).0.x` (unnamed
   planning), then `(x+1).1.x` starts again at Common Rat.
 
-So the sequence is `1.0` (plan) → `1.1` Common Rat → `1.2` Common Chimpanzee →
-… → `1.31` Baiji → `2.0` (plan) → `2.1` Common Rat → …
+So the sequence is `1.0` (plan) → `1.1.0` Common Rat → `1.2.0` Common
+Chimpanzee → … → `1.31.0` Baiji → `2.0` (plan) → `2.1.0` Common Rat → …
+
+Patch increments on a Named patch use the final number: `v1.1.0` → `v1.1.1`
+→ `v1.1.2`. The 1.0.x tags predate the Named-patch rule and are retained as
+historical planning releases.
 
 ## Release titles and purpose
 
@@ -36,6 +42,8 @@ release note explains what the patch is for.
 
 | Release | Animal nickname | Release purpose |
 |---|---|---|
+| `v1.1.0` | Common Rat | Post-v1 hardening |
+| `v1.1.1` | Common Rat | First increment on the Named patch (reserved) |
 | `v1.2.0` | Common Chimpanzee | Restore |
 | `v1.3.0` | Narwhal | Correctness & Security |
 | `v1.4.0` | Harpy Eagle | Polish |
@@ -94,8 +102,10 @@ the correct spellings.
 
 - **1.0.x** (planning, unnamed) — the v1 build-out (Stages 0–6) and early
   hardening. Released: `v1.0.0`, `v1.0.1`.
-- **1.1 Common Rat** — post-v1 hardening. Released: `v1.1.1`.
+- **1.1 Common Rat** — Named patch `v1.1.0`; post-v1 hardening.
 - **1.2 Common Chimpanzee** — released as `v1.2.0`. Release purpose: Restore.
-- **1.3 Narwhal** — planned. Release purpose: Correctness & Security.
+- **1.3 Narwhal** — in progress on `1.3-correctness-security`. Release purpose:
+  Correctness & Security. Sprint plan:
+  [`docs/sprints/1.3.0-narwhal-correctness-security.md`](sprints/1.3.0-narwhal-correctness-security.md).
 - **1.4 Harpy Eagle** — planned. Release purpose: Polish.
 - **1.5 Polar Bear** — planned. Release purpose: Stability.

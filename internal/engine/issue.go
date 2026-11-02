@@ -18,7 +18,7 @@ import (
 // acceptance criteria from the docs the issue references.
 func (e *Engine) RunIssue(ctx context.Context, issue vcs.Issue) (Result, error) {
 	set := findings.NewSet()
-	for _, f := range issues.FindingsWith(issue, e.issueDocReader()) {
+	for _, f := range issues.FindingsWithOptions(ctx, issue, e.issueDocReader(), issues.Options{Resolver: e.opts.IssueResolver}) {
 		set.Add(f)
 	}
 	runID := fmt.Sprintf("issue-%d@%s", issue.Number, issue.State)

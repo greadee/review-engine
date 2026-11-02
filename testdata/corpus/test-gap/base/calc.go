@@ -1,5 +1,5 @@
 package calc
 
-func Add(a, b int) int {
-	return a + b
+func Double(v int) int {
+	return v * 2
 }

@@ -40,6 +40,9 @@ type Coverage struct {
 	TruncatedBytes int     `json:"truncatedBytes,omitempty"`
 	FailedBatches  int     `json:"failedBatches,omitempty"`
 	Threshold      float64 `json:"threshold,omitempty"`
+	// Errors records failed-batch diagnostics. A failed batch makes coverage
+	// incomplete; keeping the reason makes the failure actionable.
+	Errors []string `json:"errors,omitempty"`
 }
 
 // Fraction is the share of selected files that reached analysis.
@@ -186,7 +189,7 @@ func (r Run) Recommendation() string {
 func ReviewMarkdown(r Run) string {
 	var b strings.Builder
 	b.WriteString("## Review Summary\n\n")
-	fmt.Fprintf(&b, "_Profile: `%s` · %d finding(s) · generated %s_\n\n", r.Profile, len(r.Findings), r.Generated.UTC().Format(time.RFC3339))
+	fmt.Fprintf(&b, "_Profile: `%s` · %d finding(s) · generated %s_\n\n", sanitize(r.Profile), len(r.Findings), r.Generated.UTC().Format(time.RFC3339))
 
 	b.WriteString("### Blocking\n\n")
 	writeFindings(&b, r.Blocking())
@@ -216,7 +219,7 @@ func ReviewMarkdown(r Run) string {
 func SummaryMarkdown(r Run) string {
 	var b strings.Builder
 	b.WriteString("## Review Summary\n\n")
-	fmt.Fprintf(&b, "_Profile `%s` · %d finding(s) · generated %s_\n\n", r.Profile, len(r.Findings), r.Generated.UTC().Format(time.RFC3339))
+	fmt.Fprintf(&b, "_Profile `%s` · %d finding(s) · generated %s_\n\n", sanitize(r.Profile), len(r.Findings), r.Generated.UTC().Format(time.RFC3339))
 	fmt.Fprintf(&b, "Severity: %s\n\n", countsString(r.Counts()))
 	fmt.Fprintf(&b, "Coverage: %s\n\n", r.Coverage)
 
@@ -262,7 +265,7 @@ func AuditMarkdown(r Run) string {
 	d := r.Delta()
 	fmt.Fprintf(&b, "\n### Delta\n\nnew=%d ongoing=%d regressed=%d resolved=%d\n", d.New, d.Ongoing, d.Regressed, d.Resolved)
 	b.WriteString("\n### Areas Reviewed\n\n")
-	fmt.Fprintf(&b, "- profile: %s\n", r.Profile)
+	fmt.Fprintf(&b, "- profile: %s\n", sanitize(r.Profile))
 	fmt.Fprintf(&b, "- coverage: %s\n\n", r.Coverage)
 	b.WriteString("### Result\n\n")
 	b.WriteString(r.Recommendation())
@@ -310,10 +313,12 @@ func unverifiedNote(f findings.Finding) string {
 	return ""
 }
 
-// sanitize neutralizes untrusted text before it is rendered into a comment or
-// archive document: it strips control characters, escapes HTML, and defuses
-// @-mentions so a hostile bundle or model response cannot inject markup or ping
-// arbitrary users.
+// Sanitize neutralizes untrusted text before it is rendered into a comment or
+// archive document: it strips control characters, escapes HTML, defuses
+// @-mentions and Markdown images, and removes backticks so file keys and
+// headings cannot break out of inline-code spans.
+func Sanitize(s string) string { return sanitize(s) }
+
 func sanitize(s string) string {
 	s = strings.Map(func(r rune) rune {
 		switch {
@@ -329,6 +334,8 @@ func sanitize(s string) string {
 	s = strings.ReplaceAll(s, "<", "&lt;")
 	s = strings.ReplaceAll(s, ">", "&gt;")
 	s = strings.ReplaceAll(s, "@", "@\u200b")
+	s = strings.ReplaceAll(s, "![", "!\\[")
+	s = strings.ReplaceAll(s, "`", "'")
 	return truncateRunes(s, 4000)
 }
 

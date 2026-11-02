@@ -4,6 +4,12 @@
   "adversarial": false,
   "notes": "Error from ReadAll is discarded, hiding truncated reads.",
   "expected": [
-    {"file": "io.go", "anchor": "swallowed-error", "classification": "Reliability", "severity": "P2"}
+    {
+      "file": "io.go",
+      "anchor": "swallowed-error",
+      "classification": "Reliability",
+      "severity": "P2",
+      "line": 7
+    }
   ]
 }

@@ -3,6 +3,51 @@
 All notable changes to this project are recorded here. Release titles use the
 animal-rank nickname; the release purpose is the theme of the release notes.
 
+## [Unreleased]
+
+**1.3 Narwhal** — Correctness & Security (in progress).
+
+#### Added
+
+- Configurable semantic request batching through `review.maxBatchFiles` and
+  `review.maxBatchBytes`, with per-profile overrides, `max-batch-files` /
+  `max-batch-bytes` action inputs, and `REVIEW_MAX_BATCH_FILES` /
+  `REVIEW_MAX_BATCH_BYTES` environment overrides. Zero keeps the automatic
+  defaults, including the smaller reasoning-model budget.
+- Prompt-injection hardening: the semantic prompt marks repository text as
+  untrusted and uses per-request nonce file boundaries that forged delimiters
+  cannot spoof.
+- Adversarial corpus fixtures for instruction override, forged findings,
+  suppression, and delimiter spoofing.
+- Pinned-model evaluation reporting with precision, recall, severity accuracy,
+  false positives, invalid evidence, latency, token usage, and optional cost.
+
+#### Fixed
+
+- Repository text containing fake file boundaries is kept inside its original
+  file block instead of being parsed as a new file.
+- Issue acceptance evidence now resolves PRs, issues, and commits through the
+  GitHub API, checks merged/closed state and touched areas, and rejects
+  hex-looking words that are not real commits. Evidence remains reviewable, not
+  proof.
+- Every bot-authored comment and grouped issue body now uses the shared
+  sanitizer for finding titles, file keys, criteria, headings, evidence
+  reasons, mentions, images, backticks, and control characters.
+
+#### Changed
+
+- Pull-request review scope is computed from the merge base, so a base branch
+  that advances after branching no longer adds reverse changes to the review.
+- Lifecycle state is scoped per pull request and profile, and the example
+  workflows cache it across runs.
+- `audit` and `sprint` scans now honor `ignore` rules and the bundle's file,
+  per-file, and total-byte ceilings. Limit hits produce an incomplete result
+  instead of a bundle that finalize rejects.
+- `sprint` now reviews files changed in the requested commit range instead of
+  scanning the whole repository.
+- `impact` now expands the range diff to the directories containing changed
+  files, giving it a defined touched-subsystem scope.
+
 ## [1.2.0] - 2026-10-27
 
 **Common Chimpanzee** — Restore.
@@ -32,7 +77,7 @@ The release note is `docs/releases/1.2.0.md`.
 - Provider 408/429/5xx and transient failures are retried with a bounded wait.
 - GitHub token redaction, comment idempotency, and path pinning are covered by tests.
 
-## [1.1.1] - 2026-10-20
+## [1.1.0] - 2026-10-20
 
 **Common Rat** — post-v1 hardening patch.
 

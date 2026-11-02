@@ -18,6 +18,7 @@ import (
 	"github.com/greadee/review-engine/internal/config"
 	"github.com/greadee/review-engine/internal/detectors"
 	"github.com/greadee/review-engine/internal/findings"
+	"github.com/greadee/review-engine/internal/issues"
 	"github.com/greadee/review-engine/internal/provider"
 	"github.com/greadee/review-engine/internal/report"
 	"github.com/greadee/review-engine/internal/reviewers"
@@ -53,6 +54,9 @@ type Options struct {
 	// PR is the pull request number, recorded in the bundle so the finalize
 	// phase can bind the artifact to the trusted event.
 	PR int
+	// IssueResolver validates PR/issue/commit references cited by issue
+	// acceptance criteria. When nil, references are not independently checked.
+	IssueResolver issues.RefResolver
 }
 
 // Engine runs profiles over a repository.
@@ -127,19 +131,34 @@ type gatherStats struct {
 	truncatedBytes int
 }
 
-func (e *Engine) gather(ref string, paths []string, wholeRepo bool, policy config.Config) gatherStats {
-	maxFiles := policy.Review.MaxFiles
-	maxBytes := policy.Review.MaxFileBytes
+// reviewLimits keeps collect inside the bundle's validation limits. Whole-repo
+// profiles use the bundle file ceiling unless a per-profile maxFiles override
+// explicitly asks for a smaller scan.
+func reviewLimits(policy config.Config, profile string, wideScope bool) (maxFiles, maxBytes, maxTotalBytes int) {
+	maxFiles = policy.Review.MaxFiles
 	if maxFiles <= 0 {
 		maxFiles = 60
 	}
-	// Whole-repo profiles (audit/sprint) review the entire codebase; the maxFiles
-	// cap exists for PR diffs where it makes sense to bound token usage.  It
-	// must not truncate audit or sprint scans.
-	if wholeRepo {
-		maxFiles = 0 // disable the cap: 0 means "unlimited"
+	if wideScope {
+		maxFiles = bundle.MaxFiles
+		if override, ok := policy.Profiles[profile]; ok && override.MaxFiles > 0 {
+			maxFiles = override.MaxFiles
+		}
 	}
+	if maxFiles > bundle.MaxFiles {
+		maxFiles = bundle.MaxFiles
+	}
+
+	maxBytes = policy.Review.MaxFileBytes
+	if maxBytes <= 0 || maxBytes > bundle.MaxFileBytes {
+		maxBytes = bundle.MaxFileBytes
+	}
+	return maxFiles, maxBytes, bundle.MaxTotalFileBytes
+}
+
+func (e *Engine) gather(ref string, paths []string, maxFiles, maxBytes, maxTotalBytes int) gatherStats {
 	var g gatherStats
+	total := 0
 	for _, p := range paths {
 		if maxFiles > 0 && len(g.files) >= maxFiles {
 			g.skipped++
@@ -155,7 +174,18 @@ func (e *Engine) gather(ref string, paths []string, wholeRepo bool, policy confi
 			g.truncatedBytes += len(data) - maxBytes
 			data = data[:maxBytes]
 		}
+		if maxTotalBytes > 0 && total+len(data) > maxTotalBytes {
+			remaining := maxTotalBytes - total
+			if remaining <= 0 {
+				g.skipped++
+				continue
+			}
+			g.truncated++
+			g.truncatedBytes += len(data) - remaining
+			data = data[:remaining]
+		}
 		g.files = append(g.files, reviewers.FileContent{Path: p, Content: string(data)})
+		total += len(data)
 	}
 	return g
 }

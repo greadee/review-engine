@@ -452,20 +452,27 @@ func TestCoverageIncompleteOnLargePR(t *testing.T) {
 	}
 }
 
-// TestAuditSprintProfilesIgnoreMaxFiles is the regression test for #12:
-// whole-repo profiles (audit/sprint) must not hit the maxFiles cap, so they
-// don't always report INCOMPLETE coverage.
-func TestAuditSprintProfilesIgnoreMaxFiles(t *testing.T) {
+// TestAuditAndSprintUseWideLimits covers #12 and C-08: whole-repo audit and
+// range-based sprint scans must not inherit the PR maxFiles=60 cap.
+func TestAuditAndSprintUseWideLimits(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init", "-q")
 
-	// Create 120 files (well above the default maxFiles=60).
+	// Create 120 files (well above the default maxFiles=60) in the base.
 	for i := 0; i < 120; i++ {
 		writeFile(t, dir, fmt.Sprintf("pkg/f%03d.go", i), fmt.Sprintf("package pkg\n\nvar V%03d = %d\n", i, i))
 	}
 	git(t, dir, "add", ".")
 	git(t, dir, "commit", "-q", "-m", "base")
 	base := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	// The sprint range must contain all 120 changed files.
+	for i := 0; i < 120; i++ {
+		writeFile(t, dir, fmt.Sprintf("pkg/f%03d.go", i), fmt.Sprintf("package pkg\n\nvar V%03d = %d\nvar W%03d = %d\n", i, i, i, i+1))
+	}
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "head")
+	head := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
 
 	cfg := config.Default()
 	cfg.Review.Static = false
@@ -475,7 +482,7 @@ func TestAuditSprintProfilesIgnoreMaxFiles(t *testing.T) {
 	eng := New(Options{Config: cfg, Repo: repo, Store: store.Stateless{}})
 
 	// Audit profile: should analyze ALL files, not stop at 60.
-	res, err := eng.RunRange(context.Background(), "audit", base, base, "o/r", "HEAD")
+	res, err := eng.RunRange(context.Background(), "audit", base, head, "o/r", "HEAD")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,8 +496,8 @@ func TestAuditSprintProfilesIgnoreMaxFiles(t *testing.T) {
 		t.Fatalf("audit coverage with 120 files must be complete, got %+v", res.Run.Coverage)
 	}
 
-	// Sprint profile: same behavior.
-	res2, err := eng.RunRange(context.Background(), "sprint", base, base, "o/r", "HEAD")
+	// Sprint profile: same wide limit, but scoped to the commit range.
+	res2, err := eng.RunRange(context.Background(), "sprint", base, head, "o/r", "HEAD")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -605,5 +612,208 @@ func TestPublishRejectsGuardedArchiveBranch(t *testing.T) {
 	_, err := eng.Publish(context.Background(), nil, "o", "r", Result{Run: report.Run{ID: "pr@x", Profile: "pr"}})
 	if err == nil || !strings.Contains(err.Error(), "protected") {
 		t.Fatalf("expected archive guard error, got %v", err)
+	}
+}
+
+func TestCollectUsesMergeBaseForPR(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q", "-b", "main")
+	writeFile(t, dir, "a.go", "package a\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "base")
+
+	git(t, dir, "switch", "-c", "feature")
+	writeFile(t, dir, "a.go", "package a\n\nvar X = 1\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "feature")
+	head := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	git(t, dir, "switch", "main")
+	writeFile(t, dir, "b.go", "package a\n\nvar Y = 2\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "main advance")
+	baseTip := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	cfg := config.Default()
+	cfg.Review.Static = false
+	cfg.Review.Semantic = false
+	repo, err := vcs.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng := New(Options{Config: cfg, Repo: repo, Store: store.Stateless{}})
+	b, err := eng.Collect(context.Background(), "pr", baseTip, head, "o/r", head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Files) != 1 || b.Files[0].Path != "a.go" {
+		t.Fatalf("collect used the wrong scope: %+v", b.Files)
+	}
+}
+
+func TestAuditSprintHonorIgnoreRules(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q")
+	writeFile(t, dir, "pkg/keep.go", "package pkg\n\nvar Keep = 1\n")
+	writeFile(t, dir, "vendor/skip.go", "package vendor\n\nvar Skip = 1\n")
+	writeFile(t, dir, "docs/skip.md", "ignored docs\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "base")
+	base := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	writeFile(t, dir, "pkg/keep.go", "package pkg\n\nvar Keep = 2\n")
+	writeFile(t, dir, "vendor/skip.go", "package vendor\n\nvar Skip = 2\n")
+	writeFile(t, dir, "docs/skip.md", "ignored docs v2\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "head")
+	head := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	cfg := config.Default()
+	cfg.Review.Static = false
+	cfg.Review.Semantic = false
+	cfg.Ignore = []string{"vendor/**", "docs/**"}
+	repo, _ := vcs.Open(dir)
+	eng := New(Options{Config: cfg, Repo: repo, Store: store.Stateless{}})
+
+	for _, profile := range []string{"audit", "sprint"} {
+		res, err := eng.RunRange(context.Background(), profile, base, head, "o/r", "HEAD")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Run.Coverage.Selected != 1 {
+			t.Fatalf("%s selected %d files, want 1 after ignore rules", profile, res.Run.Coverage.Selected)
+		}
+		if !res.Run.Coverage.Complete() {
+			t.Fatalf("%s coverage should be complete: %+v", profile, res.Run.Coverage)
+		}
+	}
+}
+
+func TestWholeRepoBundleStaysWithinValidationLimits(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q")
+	count := bundle.MaxFiles + 1
+	for i := 0; i < count; i++ {
+		writeFile(t, dir, fmt.Sprintf("pkg/f%04d.go", i), fmt.Sprintf("package pkg\n\nvar V%04d = %d\n", i, i))
+	}
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "base")
+	base := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	cfg := config.Default()
+	cfg.Review.Static = false
+	cfg.Review.Semantic = false
+	repo, _ := vcs.Open(dir)
+	eng := New(Options{Config: cfg, Repo: repo, Store: store.Stateless{}})
+
+	b, err := eng.Collect(context.Background(), "audit", base, base, "o/r", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Files) > bundle.MaxFiles {
+		t.Fatalf("bundle has %d files, exceeds limit %d", len(b.Files), bundle.MaxFiles)
+	}
+	if b.Skipped == 0 {
+		t.Fatal("expected skipped files above the bundle file cap")
+	}
+	if err := b.Validate(); err != nil {
+		t.Fatalf("collect produced a bundle finalize would reject: %v", err)
+	}
+	res, err := eng.Finalize(context.Background(), b)
+	if err != nil {
+		t.Fatalf("finalize rejected the capped bundle: %v", err)
+	}
+	if res.Run.Coverage.Complete() {
+		t.Fatalf("capped whole-repo scan must be incomplete: %+v", res.Run.Coverage)
+	}
+}
+
+func TestGatherEnforcesTotalByteLimit(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q")
+	writeFile(t, dir, "a.txt", "abcd")
+	writeFile(t, dir, "b.txt", "efgh")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "base")
+	repo, _ := vcs.Open(dir)
+	eng := New(Options{Repo: repo, Store: store.Stateless{}})
+
+	g := eng.gather("HEAD", []string{"a.txt", "b.txt"}, 10, 100, 6)
+	if len(g.files) != 2 || g.files[1].Content != "ef" {
+		t.Fatalf("unexpected gathered files: %+v", g.files)
+	}
+	if g.truncated != 1 || g.truncatedBytes != 2 {
+		t.Fatalf("unexpected truncation accounting: %+v", g)
+	}
+	total := len(g.files[0].Content) + len(g.files[1].Content)
+	if total > 6 {
+		t.Fatalf("gathered %d bytes, exceeds total cap 6", total)
+	}
+}
+
+func TestSprintUsesCommitRangeNotWholeRepo(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q")
+	writeFile(t, dir, "pkg/changed.go", "package pkg\n\nvar Changed = 1\n")
+	writeFile(t, dir, "pkg/unchanged.go", "package pkg\n\nvar Unchanged = 1\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "base")
+	base := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+	writeFile(t, dir, "pkg/changed.go", "package pkg\n\nvar Changed = 2\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "head")
+	head := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	cfg := config.Default()
+	cfg.Review.Static = false
+	cfg.Review.Semantic = false
+	repo, _ := vcs.Open(dir)
+	eng := New(Options{Config: cfg, Repo: repo, Store: store.Stateless{}})
+
+	sprint, err := eng.RunRange(context.Background(), "sprint", base, head, "o/r", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sprint.Run.Coverage.Selected != 1 {
+		t.Fatalf("sprint selected %d files, want only the 1 changed file", sprint.Run.Coverage.Selected)
+	}
+
+	audit, err := eng.RunRange(context.Background(), "audit", base, head, "o/r", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if audit.Run.Coverage.Selected != 2 {
+		t.Fatalf("audit selected %d files, want both repository files", audit.Run.Coverage.Selected)
+	}
+}
+
+func TestImpactExpandsTouchedSubsystems(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q")
+	writeFile(t, dir, "api/handler.go", "package api\n\nvar Handler = 1\n")
+	writeFile(t, dir, "api/other.go", "package api\n\nvar Other = 1\n")
+	writeFile(t, dir, "internal/engine/core.go", "package engine\n\nvar Core = 1\n")
+	writeFile(t, dir, "root.go", "package root\n\nvar Root = 1\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "base")
+	base := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+	writeFile(t, dir, "api/handler.go", "package api\n\nvar Handler = 2\n")
+	writeFile(t, dir, "root.go", "package root\n\nvar Root = 2\n")
+	git(t, dir, "add", ".")
+	git(t, dir, "commit", "-q", "-m", "head")
+	head := strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+
+	cfg := config.Default()
+	cfg.Review.Static = false
+	cfg.Review.Semantic = false
+	repo, _ := vcs.Open(dir)
+	eng := New(Options{Config: cfg, Repo: repo, Store: store.Stateless{}})
+
+	res, err := eng.RunRange(context.Background(), "impact", base, head, "o/r", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Run.Coverage.Selected != 3 {
+		t.Fatalf("impact selected %d files, want changed files plus the touched api directory", res.Run.Coverage.Selected)
 	}
 }

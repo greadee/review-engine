@@ -6,6 +6,8 @@ review:
   semantic: true
   maxFiles: 60
   maxFileBytes: 200000
+  maxBatchFiles: 0
+  maxBatchBytes: 0
   blockThreshold: P1
   coverageThreshold: 1.0
 

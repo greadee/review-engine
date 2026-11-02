@@ -69,6 +69,11 @@ if [ -n "$coverage_threshold" ]; then
   esac
 fi
 
+max_batch_files="${REVIEW_INPUT_MAX_BATCH_FILES:-}"
+max_batch_bytes="${REVIEW_INPUT_MAX_BATCH_BYTES:-}"
+require_uint max-batch-files "$max_batch_files"
+require_uint max-batch-bytes "$max_batch_bytes"
+
 pr="${REVIEW_INPUT_PR:-}"
 issue="${REVIEW_INPUT_ISSUE:-}"
 require_uint pr "$pr"
@@ -109,6 +114,8 @@ export REVIEW_ISSUE_AUTO_REOPEN="$reopen"
 [ -n "$base_url" ] && export REVIEW_PROVIDER_BASE_URL="$base_url"
 [ -n "$allowed_base_urls" ] && export REVIEW_PROVIDER_ALLOWED_BASE_URLS="$allowed_base_urls"
 [ -n "$coverage_threshold" ] && export REVIEW_COVERAGE_THRESHOLD="$coverage_threshold"
+[ -n "$max_batch_files" ] && export REVIEW_MAX_BATCH_FILES="$max_batch_files"
+[ -n "$max_batch_bytes" ] && export REVIEW_MAX_BATCH_BYTES="$max_batch_bytes"
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   echo "summary=summary.md" >> "$GITHUB_OUTPUT"

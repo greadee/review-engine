@@ -25,6 +25,7 @@ jobs:
           profile: pr
           base: origin/${{ github.base_ref }}
           head: ${{ github.sha }}
+          pr: ${{ github.event.pull_request.number }}
           repository: ${{ github.repository }}
           bundle: bundle.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

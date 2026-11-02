@@ -115,6 +115,14 @@ inputs:
     description: "Minimum fraction (0..1) of selected files that must be analyzed (default 1.0)"
     required: false
     default: ""
+  max-batch-files:
+    description: "Maximum files per semantic request (empty or 0 = automatic)"
+    required: false
+    default: ""
+  max-batch-bytes:
+    description: "Maximum source bytes per semantic request (empty or 0 = automatic)"
+    required: false
+    default: ""
   api-key:
     description: "Provider API key (pass a secret)"
     required: false
@@ -173,6 +181,8 @@ runs:
         REVIEW_INPUT_STORE_SQLITE: ${{ inputs.store-sqlite }}
         REVIEW_INPUT_BLOCK_THRESHOLD: ${{ inputs.block-threshold }}
         REVIEW_INPUT_COVERAGE_THRESHOLD: ${{ inputs.coverage-threshold }}
+        REVIEW_INPUT_MAX_BATCH_FILES: ${{ inputs.max-batch-files }}
+        REVIEW_INPUT_MAX_BATCH_BYTES: ${{ inputs.max-batch-bytes }}
         REVIEW_ACTION_PATH: ${{ github.action_path }}
         REVIEW_PROVIDER_API_KEY: ${{ inputs.api-key }}
         GITHUB_TOKEN: ${{ github.token }}
