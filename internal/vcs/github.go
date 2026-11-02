@@ -204,17 +204,6 @@ func (c *GitHub) Comment(ctx context.Context, owner, repo string, number int, bo
 	return c.do(ctx, http.MethodPost, path, map[string]string{"body": body}, nil)
 }
 
-// AuthenticatedLogin returns the login of the token's user.
-func (c *GitHub) AuthenticatedLogin(ctx context.Context) (string, error) {
-	var u struct {
-		Login string `json:"login"`
-	}
-	if err := c.do(ctx, http.MethodGet, "/user", nil, &u); err != nil {
-		return "", err
-	}
-	return u.Login, nil
-}
-
 type issueComment struct {
 	ID   int64  `json:"id"`
 	Body string `json:"body"`

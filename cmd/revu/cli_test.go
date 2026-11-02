@@ -174,7 +174,9 @@ func TestIssueCommandCommentAndClosePaths(t *testing.T) {
 func TestReconcileCommandCommentPath(t *testing.T) {
 	dir, _, _ := cliRepo(t)
 	var posted bool
+	var gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/1":
@@ -191,13 +193,61 @@ func TestReconcileCommandCommentPath(t *testing.T) {
 	}))
 	defer srv.Close()
 	t.Setenv("GITHUB_API_URL", srv.URL)
-	t.Setenv("GITHUB_TOKEN", "token")
+	t.Setenv("GITHUB_TOKEN", "")
+	configPath := filepath.Join(t.TempDir(), "revu.yaml")
+	writeCLIFile(t, configPath, "githubToken: configured-token\n")
 
-	args := []string{"reconcile", "--repository", "o/r", "--issues", "1", "--repo-dir", dir, "--comment"}
+	args := []string{"reconcile", "--repository", "o/r", "--issues", "1", "--repo-dir", dir, "--comment", "--config", configPath}
 	if got := quietDispatch(t, args); got != 0 {
 		t.Fatalf("reconcile command exit code = %d, want 0", got)
 	}
 	if !posted {
 		t.Fatal("expected reconcile comment")
+	}
+	if gotAuth != "Bearer configured-token" {
+		t.Fatalf("reconcile Authorization = %q, want configured token", gotAuth)
+	}
+}
+
+func TestFileIssueUsesConfiguredToken(t *testing.T) {
+	dir, _, _ := cliRepo(t)
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues" {
+			gotAuth = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, `{"number":7}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	t.Setenv("GITHUB_API_URL", srv.URL)
+	t.Setenv("GITHUB_TOKEN", "")
+
+	findingsPath := filepath.Join(t.TempDir(), "findings.json")
+	writeCLIFile(t, findingsPath, `{"id":"audit@abc","profile":"audit","findings":[{"title":"sample","classification":"Bug","severity":"P2","evidence":{"file":"a.go","line":1},"detector":"detector.sample","anchor":"sample"}]}`)
+	configPath := filepath.Join(t.TempDir(), "revu.yaml")
+	writeCLIFile(t, configPath, "githubToken: configured-token\n")
+
+	args := []string{"file-issue", "--in", findingsPath, "--repository", "o/r", "--repo-dir", dir, "--config", configPath}
+	if got := quietDispatch(t, args); got != 0 {
+		t.Fatalf("file-issue exit code = %d, want 0", got)
+	}
+	if gotAuth != "Bearer configured-token" {
+		t.Fatalf("file-issue Authorization = %q, want configured token", gotAuth)
+	}
+}
+
+func TestEvalUsesEndpointAllowlist(t *testing.T) {
+	t.Setenv("REVIEW_GLOBAL_CONFIG", filepath.Join(t.TempDir(), "absent.yaml"))
+	t.Setenv("REVIEW_PROVIDER_API_KEY", "key")
+	t.Setenv("REVIEW_PROVIDER_BASE_URL", "https://not-allowed.example/v1")
+	t.Setenv("REVIEW_PROVIDER_ALLOWED_BASE_URLS", "")
+	corpus := filepath.Join("..", "..", "testdata", "corpus")
+	args := []string{"eval", "--corpus", corpus, "--provider", "openai-compatible", "--model", "m"}
+	if got := quietDispatch(t, args); got != 1 {
+		t.Fatalf("eval with unlisted endpoint exit code = %d, want 1", got)
 	}
 }
