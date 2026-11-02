@@ -17,6 +17,13 @@ import (
 // be substituted (DeepSeek, vLLM, Ollama, ...).
 const DefaultBaseURL = "https://api.openai.com/v1"
 
+// MaxResponseBytes bounds a provider response before decoding.
+const MaxResponseBytes = 8 << 20
+
+// ErrRetryExhausted distinguishes a failed provider call from a clean empty
+// result. Callers can still inspect the wrapped cause.
+var ErrRetryExhausted = errors.New("provider: retry exhausted")
+
 // OpenAI is a provider for any OpenAI-compatible chat-completions endpoint.
 type OpenAI struct {
 	baseURL            string
@@ -158,10 +165,13 @@ func (o *OpenAI) Complete(ctx context.Context, req Request) (Response, error) {
 			continue
 		}
 
-		data, readErr := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		data, readErr := io.ReadAll(io.LimitReader(resp.Body, MaxResponseBytes+1))
 		retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
 		status := resp.StatusCode
 		_ = resp.Body.Close()
+		if readErr == nil && len(data) > MaxResponseBytes {
+			return Response{}, fmt.Errorf("provider: response exceeds %d bytes", MaxResponseBytes)
+		}
 		if readErr != nil {
 			lastErr = fmt.Errorf("read response: %w", readErr)
 			if attempt == attempts-1 {
@@ -210,7 +220,7 @@ func (o *OpenAI) Complete(ctx context.Context, req Request) (Response, error) {
 	if lastErr == nil {
 		lastErr = errors.New("request failed")
 	}
-	return Response{}, fmt.Errorf("provider: request failed after %d attempt(s): %w", attempts, lastErr)
+	return Response{}, fmt.Errorf("%w after %d attempt(s): %w", ErrRetryExhausted, attempts, lastErr)
 }
 
 func retryableStatus(status int) bool {

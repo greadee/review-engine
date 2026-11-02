@@ -54,6 +54,9 @@ animal-rank nickname; the release purpose is the theme of the release notes.
 - `cmd/revu` now has table-driven coverage for command dispatch, exit codes,
   run/collect/finalize, issue/reconcile comment paths, dry-run, persist policy,
   and config errors. CI enforces a documented 60% coverage floor.
+- Provider responses are capped at 8 MiB, JSON extraction is bounded, context
+  cancellation stops semantic batches, and retry exhaustion is reported through
+  `provider.ErrRetryExhausted` instead of looking like a clean result.
 
 ## [1.2.0] - 2026-10-27
 
