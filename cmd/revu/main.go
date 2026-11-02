@@ -34,53 +34,61 @@ import (
 var version = "dev"
 
 func main() {
-	if len(os.Args) < 2 {
+	os.Exit(dispatch(os.Args[1:]))
+}
+
+// dispatch runs one CLI command and returns the process exit code. Keeping the
+// command switch separate from main makes exit behavior testable without a
+// subprocess.
+func dispatch(args []string) int {
+	if len(args) < 1 {
 		usage()
-		os.Exit(2)
+		return 2
 	}
 	var err error
-	switch os.Args[1] {
+	switch args[0] {
 	case "run":
-		err = run(os.Args[2:])
+		err = run(args[1:])
 	case "collect":
-		err = collectCmd(os.Args[2:])
+		err = collectCmd(args[1:])
 	case "finalize":
-		err = finalizeCmd(os.Args[2:])
+		err = finalizeCmd(args[1:])
 	case "issue":
-		err = issueReview(os.Args[2:])
+		err = issueReview(args[1:])
 	case "plan":
-		err = plan(os.Args[2:])
+		err = plan(args[1:])
 	case "report":
-		err = renderReport(os.Args[2:])
+		err = renderReport(args[1:])
 	case "providers":
 		for _, name := range provider.Names() {
 			fmt.Println(name)
 		}
 	case "init":
-		err = initConfig(os.Args[2:])
+		err = initConfig(args[1:])
 	case "config":
-		err = showConfig(os.Args[2:])
+		err = showConfig(args[1:])
 	case "file-issue":
-		err = fileIssue(os.Args[2:])
+		err = fileIssue(args[1:])
 	case "reconcile":
-		err = reconcile(os.Args[2:])
+		err = reconcile(args[1:])
 	case "doctor":
-		err = doctor(os.Args[2:])
+		err = doctor(args[1:])
 	case "eval":
-		err = evalCorpus(os.Args[2:])
+		err = evalCorpus(args[1:])
 	case "version":
 		fmt.Println(currentVersion())
 	case "-h", "--help", "help":
 		usage()
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, "unknown command %q\n", args[0])
 		usage()
-		os.Exit(2)
+		return 2
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "revu: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 // currentVersion prefers an injected release version, then module metadata, then
