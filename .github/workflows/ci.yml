@@ -35,6 +35,9 @@ jobs:
       - name: Test
         run: go test ./...
 
+      - name: CLI coverage floor
+        run: bash scripts/check-cli-coverage.sh
+
       - name: Corpus evaluation
         run: |
           go build -o revu ./cmd/revu

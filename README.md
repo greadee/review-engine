@@ -385,7 +385,16 @@ go build ./...
 go vet ./...
 go test ./...
 gofmt -l .
+bash scripts/check-cli-coverage.sh
 ```
+
+### CLI tests and coverage
+
+`cmd/revu` tests cover command dispatch and exit codes, run/collect/finalize,
+issue/reconcile comment paths, dry-run, persist policy, config errors, and the
+GitHub API paths. The documented coverage floor is **60.0%**; CI enforces it
+with `scripts/check-cli-coverage.sh`. See
+[`docs/cli-testing.md`](docs/cli-testing.md).
 
 ### Corpus & accuracy
 

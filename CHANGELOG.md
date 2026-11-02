@@ -51,6 +51,9 @@ animal-rank nickname; the release purpose is the theme of the release notes.
   scoped to changed packages, gofmt handles unusual filenames safely, and
   missing tools produce an analyzer coverage gap that makes the result
   incomplete.
+- `cmd/revu` now has table-driven coverage for command dispatch, exit codes,
+  run/collect/finalize, issue/reconcile comment paths, dry-run, persist policy,
+  and config errors. CI enforces a documented 60% coverage floor.
 
 ## [1.2.0] - 2026-10-27
 

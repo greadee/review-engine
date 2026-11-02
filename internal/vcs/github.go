@@ -27,8 +27,12 @@ func NewGitHub(token string) *GitHub {
 	if token == "" {
 		token = os.Getenv("GITHUB_TOKEN")
 	}
+	base := strings.TrimRight(strings.TrimSpace(os.Getenv("GITHUB_API_URL")), "/")
+	if base == "" {
+		base = "https://api.github.com"
+	}
 	return &GitHub{
-		BaseURL: "https://api.github.com",
+		BaseURL: base,
 		Token:   token,
 		HTTP:    &http.Client{Timeout: 60 * time.Second},
 	}
