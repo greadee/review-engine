@@ -2,6 +2,7 @@ package analyzers
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -47,5 +48,27 @@ func TestFilterExt(t *testing.T) {
 	got := filterExt([]string{"a.py", "b.go", "c.py"}, ".py")
 	if len(got) != 2 {
 		t.Fatalf("unexpected filter result %v", got)
+	}
+}
+
+func TestPythonMissingToolingIsUnavailable(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "pyproject.toml"), "[project]\nname='x'\n")
+	mustWrite(t, filepath.Join(dir, "a.py"), "print('x')\n")
+	t.Setenv("PATH", t.TempDir())
+	_, err := NewPython().Analyze(context.Background(), Target{Dir: dir, Files: []string{"a.py"}})
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("missing python tooling should be ErrUnavailable, got %v", err)
+	}
+}
+
+func TestTypeScriptMissingToolingIsUnavailable(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "tsconfig.json"), "{}\n")
+	mustWrite(t, filepath.Join(dir, "a.ts"), "const x: number = 1\n")
+	t.Setenv("PATH", t.TempDir())
+	_, err := NewTypeScript().Analyze(context.Background(), Target{Dir: dir, Files: []string{"a.ts"}})
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("missing tsc should be ErrUnavailable, got %v", err)
 	}
 }

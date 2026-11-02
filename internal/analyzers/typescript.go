@@ -3,6 +3,8 @@ package analyzers
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,15 +38,26 @@ func (ts TypeScript) Analyze(ctx context.Context, t Target) ([]findings.Finding,
 	}
 	tsc, err := exec.LookPath("tsc")
 	if err != nil {
-		return nil, nil
+		return nil, unavailable("tsc")
 	}
-	cmd := exec.CommandContext(ctx, tsc, "--noEmit", "--pretty", "false")
+	cmdCtx, cancel := withAnalyzerTimeout(ctx)
+	defer cancel()
+	cmd := exec.CommandContext(cmdCtx, tsc, "--noEmit", "--pretty", "false")
 	cmd.Dir = t.Dir
 	cmd.Env = childEnv()
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
-	_ = cmd.Run()
+	err = cmd.Run()
+	if cmdCtx.Err() == context.DeadlineExceeded {
+		return nil, fmt.Errorf("static.typescript.tsc timed out after %s", analyzerTimeout)
+	}
+	if err != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			return nil, fmt.Errorf("static.typescript.tsc: %w", err)
+		}
+	}
 
 	var found []findings.Finding
 	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
@@ -62,6 +75,9 @@ func (ts TypeScript) Analyze(ctx context.Context, t Target) ([]findings.Finding,
 			Detector:       "static.typescript.tsc",
 			Anchor:         m[4] + ":" + m[5],
 		})
+	}
+	if len(found) == 0 && err != nil {
+		return nil, fmt.Errorf("static.typescript.tsc produced no parseable diagnostics: %w", err)
 	}
 	return found, nil
 }

@@ -34,6 +34,7 @@ const (
 	MaxTotalFileBytes = 48 << 20
 	MaxFindings       = 2000
 	MaxRubric         = 64
+	MaxAnalyzerGaps   = 64
 	MaxPathLen        = 1024
 	MaxRunIDLen       = 256
 )
@@ -60,6 +61,9 @@ type Bundle struct {
 	Skipped        int `json:"skippedFiles,omitempty"`
 	Truncated      int `json:"truncatedFiles,omitempty"`
 	TruncatedBytes int `json:"truncatedBytes,omitempty"`
+	// AnalyzerGaps records static-analysis tools that were unavailable or did
+	// not complete. A gap makes finalize coverage incomplete.
+	AnalyzerGaps []string `json:"analyzerGaps,omitempty"`
 }
 
 // Trusted identifies the review the bundle is expected to describe. Values are
@@ -111,6 +115,14 @@ func (b Bundle) Validate() error {
 	for _, r := range b.Rubric {
 		if len(r) > 256 {
 			return fmt.Errorf("bundle: rubric entry too long")
+		}
+	}
+	if len(b.AnalyzerGaps) > MaxAnalyzerGaps {
+		return fmt.Errorf("bundle: too many analyzer gaps (%d)", len(b.AnalyzerGaps))
+	}
+	for _, g := range b.AnalyzerGaps {
+		if strings.TrimSpace(g) == "" || len(g) > 512 {
+			return fmt.Errorf("bundle: invalid analyzer gap")
 		}
 	}
 	if len(b.Files) > MaxFiles {

@@ -3,6 +3,7 @@ package analyzers
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -41,7 +42,7 @@ func (p Python) Analyze(ctx context.Context, t Target) ([]findings.Finding, erro
 	}
 	py, err := pythonInterpreter()
 	if err != nil {
-		return nil, nil
+		return nil, unavailable("ruff and python")
 	}
 	return compileCheck(ctx, t.Dir, py, pyFiles)
 }
@@ -66,13 +67,24 @@ func pythonInterpreter() (string, error) {
 
 func runRuff(ctx context.Context, dir, ruff string, files []string) ([]findings.Finding, error) {
 	args := append([]string{"check", "--output-format", "concise", "--no-cache"}, files...)
-	cmd := exec.CommandContext(ctx, ruff, args...)
+	cmdCtx, cancel := withAnalyzerTimeout(ctx)
+	defer cancel()
+	cmd := exec.CommandContext(cmdCtx, ruff, args...)
 	cmd.Dir = dir
 	cmd.Env = childEnv()
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
-	_ = cmd.Run() // non-zero exit simply means diagnostics were reported
+	err := cmd.Run()
+	if cmdCtx.Err() == context.DeadlineExceeded {
+		return nil, fmt.Errorf("static.python.ruff timed out after %s", analyzerTimeout)
+	}
+	if err != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+			return nil, fmt.Errorf("static.python.ruff: %w", err)
+		}
+	}
 	var found []findings.Finding
 	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
 		line = strings.TrimSpace(line)
@@ -92,18 +104,27 @@ func runRuff(ctx context.Context, dir, ruff string, files []string) ([]findings.
 			Anchor:         code + ":" + msg,
 		})
 	}
+	if len(found) == 0 && err != nil {
+		return nil, fmt.Errorf("static.python.ruff produced no parseable diagnostics: %w", err)
+	}
 	return found, nil
 }
 
 func compileCheck(ctx context.Context, dir, py string, files []string) ([]findings.Finding, error) {
 	args := append([]string{"-m", "py_compile"}, files...)
-	cmd := exec.CommandContext(ctx, py, args...)
+	cmdCtx, cancel := withAnalyzerTimeout(ctx)
+	defer cancel()
+	cmd := exec.CommandContext(cmdCtx, py, args...)
 	cmd.Dir = dir
 	cmd.Env = childEnv()
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
-	if err := cmd.Run(); err == nil {
+	err := cmd.Run()
+	if cmdCtx.Err() == context.DeadlineExceeded {
+		return nil, fmt.Errorf("static.python.compile timed out after %s", analyzerTimeout)
+	}
+	if err == nil {
 		return nil, nil
 	}
 	return parseCompileErrors(strings.TrimSpace(out.String())), nil

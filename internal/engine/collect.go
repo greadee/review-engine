@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -56,6 +57,7 @@ func (e *Engine) Collect(ctx context.Context, profile, base, head, repository, r
 	}
 
 	set := findings.NewSet()
+	var analyzerGaps []string
 	if policy.Review.Static {
 		target := analyzers.Target{
 			Dir:       e.opts.Repo.Dir,
@@ -65,11 +67,15 @@ func (e *Engine) Collect(ctx context.Context, profile, base, head, repository, r
 		}
 		for _, a := range e.opts.Analyzers {
 			found, err := a.Analyze(ctx, target)
-			if err != nil {
-				return bundle.Bundle{}, fmt.Errorf("engine: analyzer %s: %w", a.Name(), err)
-			}
 			for _, f := range found {
 				set.Add(f)
+			}
+			if err != nil {
+				if errors.Is(err, analyzers.ErrUnavailable) {
+					analyzerGaps = append(analyzerGaps, fmt.Sprintf("%s: %v", a.Name(), err))
+					continue
+				}
+				return bundle.Bundle{}, fmt.Errorf("engine: analyzer %s: %w", a.Name(), err)
 			}
 		}
 	}
@@ -92,6 +98,7 @@ func (e *Engine) Collect(ctx context.Context, profile, base, head, repository, r
 		Skipped:        gathered.skipped,
 		Truncated:      gathered.truncated,
 		TruncatedBytes: gathered.truncatedBytes,
+		AnalyzerGaps:   analyzerGaps,
 		Files:          gathered.files,
 		StaticFindings: set.Items(),
 	}, nil
@@ -134,6 +141,7 @@ func (e *Engine) Finalize(ctx context.Context, b bundle.Bundle) (Result, error) 
 		Truncated:      b.Truncated,
 		TruncatedBytes: b.TruncatedBytes,
 		Threshold:      e.opts.Config.Review.CoverageThreshold,
+		AnalyzerGaps:   append([]string(nil), b.AnalyzerGaps...),
 	}
 	if coverage.Selected == 0 {
 		coverage.Selected = len(b.Files)

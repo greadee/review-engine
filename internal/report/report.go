@@ -43,6 +43,8 @@ type Coverage struct {
 	// Errors records failed-batch diagnostics. A failed batch makes coverage
 	// incomplete; keeping the reason makes the failure actionable.
 	Errors []string `json:"errors,omitempty"`
+	// AnalyzerGaps records static-analysis tools that were unavailable.
+	AnalyzerGaps []string `json:"analyzerGaps,omitempty"`
 }
 
 // Fraction is the share of selected files that reached analysis.
@@ -60,7 +62,7 @@ func (c Coverage) Fraction() float64 {
 // Complete reports whether the whole scope was analyzed without skips,
 // truncation, or provider failures, and meets the configured threshold.
 func (c Coverage) Complete() bool {
-	if c.Skipped > 0 || c.Truncated > 0 || c.FailedBatches > 0 {
+	if c.Skipped > 0 || c.Truncated > 0 || c.FailedBatches > 0 || len(c.AnalyzerGaps) > 0 {
 		return false
 	}
 	if c.Threshold > 0 && c.Fraction() < c.Threshold {
@@ -84,6 +86,9 @@ func (c Coverage) String() string {
 	}
 	if c.FailedBatches > 0 {
 		notes = append(notes, fmt.Sprintf("%d batches failed", c.FailedBatches))
+	}
+	if len(c.AnalyzerGaps) > 0 {
+		notes = append(notes, fmt.Sprintf("%d analyzer gap(s)", len(c.AnalyzerGaps)))
 	}
 	if len(notes) > 0 {
 		s += " (" + strings.Join(notes, ", ") + ")"

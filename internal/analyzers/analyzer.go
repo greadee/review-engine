@@ -5,8 +5,11 @@ package analyzers
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/greadee/review-engine/internal/findings"
 )
@@ -23,6 +26,20 @@ type Target struct {
 	AllFiles []string
 	// WholeRepo is true for audit/sprint profiles.
 	WholeRepo bool
+}
+
+// ErrUnavailable marks a project whose tooling is missing. The engine reports
+// this as an analyzer coverage gap instead of silently approving a scan.
+var ErrUnavailable = errors.New("analyzer tool unavailable")
+
+const analyzerTimeout = 2 * time.Minute
+
+func unavailable(tool string) error {
+	return fmt.Errorf("%w: %s", ErrUnavailable, tool)
+}
+
+func withAnalyzerTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, analyzerTimeout)
 }
 
 // Analyzer inspects a target and returns findings.

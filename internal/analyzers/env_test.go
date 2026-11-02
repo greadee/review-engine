@@ -16,6 +16,9 @@ func TestGoAnalyzerChildEnvExcludesSecrets(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n\ngo 1.26\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "x.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	bin := t.TempDir()
 	dump := filepath.Join(t.TempDir(), "env.txt")
 	// Bake the dump path into the script: the scraped child env must not be
