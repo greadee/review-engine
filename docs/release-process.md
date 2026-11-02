@@ -18,6 +18,8 @@ Do not use the purpose as the animal nickname. See
 - `CHANGELOG.md` contains a `## [X.Y.Z]` section.
 - The tree is clean and the release is prepared on `main`.
 - `go test ./...`, `gofmt`, and `go vet` are clean.
+- Race tests, `staticcheck`, `govulncheck`, and CodeQL are green.
+- Dependabot has no unreviewed security update outstanding.
 - CI is green at the commit to be tagged.
 - The target tag does not already exist.
 

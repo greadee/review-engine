@@ -61,6 +61,8 @@ animal-rank nickname; the release purpose is the theme of the release notes.
   enforces the provider endpoint allowlist, and the CLI constructs GitHub
   clients through one helper.
 - Removed the unused `/user` authentication API.
+- CI now gates race-enabled tests, `staticcheck`, `govulncheck`, and CodeQL.
+  Dependabot covers Go modules and GitHub Actions.
 
 ## [1.2.0] - 2026-10-27
 

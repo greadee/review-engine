@@ -7,7 +7,6 @@ package detectors
 import (
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/greadee/review-engine/internal/analyzers"
@@ -73,17 +72,4 @@ func readFile(dir, path string) ([]byte, error) {
 
 func fileLines(data []byte) []string {
 	return strings.Split(string(data), "\n")
-}
-
-func sortedUnique(in []string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, s := range in {
-		if !seen[s] {
-			seen[s] = true
-			out = append(out, s)
-		}
-	}
-	sort.Strings(out)
-	return out
 }
