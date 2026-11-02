@@ -16,6 +16,8 @@ import (
 func cliRepo(t *testing.T) (dir, base, head string) {
 	t.Helper()
 	t.Setenv("REVIEW_GLOBAL_CONFIG", filepath.Join(t.TempDir(), "absent.yaml"))
+	// Keep CLI state paths deterministic when the test suite runs inside CI.
+	t.Setenv("GITHUB_ACTIONS", "")
 	dir = t.TempDir()
 	gitTest(t, dir, "init", "-q")
 	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644); err != nil {
