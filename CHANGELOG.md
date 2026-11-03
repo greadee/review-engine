@@ -3,9 +3,11 @@
 All notable changes to this project are recorded here. Release titles use the
 animal-rank nickname; the release purpose is the theme of the release notes.
 
-## [Unreleased]
+## [1.3.0] - 2026-11-03
 
-**1.3 Narwhal** — Correctness & Security (in progress).
+**Narwhal** — Correctness & Security.
+
+The release note is `docs/releases/1.3.0.md`.
 
 #### Added
 
