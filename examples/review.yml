@@ -37,7 +37,7 @@ jobs:
           key: revu-state-${{ github.repository }}-pr-${{ github.event.pull_request.number }}-pr-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             revu-state-${{ github.repository }}-pr-${{ github.event.pull_request.number }}-pr-
-      - uses: greadee/review-engine@7de258fcb3c50467bdc87f89443af800527f706a
+      - uses: greadee/review-engine@b78acc204c23f3d7015efee7dd002f26fbc96cd9
         with:
           profile: pr
           model: gpt-4o-mini
