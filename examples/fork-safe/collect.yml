@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - uses: greadee/review-engine@7de258fcb3c50467bdc87f89443af800527f706a
+      - uses: greadee/review-engine@b78acc204c23f3d7015efee7dd002f26fbc96cd9
         with:
           phase: collect
           profile: pr

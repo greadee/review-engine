@@ -51,7 +51,7 @@ jobs:
           key: revu-state-${{ github.repository }}-pr-${{ steps.pr.outputs.number }}-pr-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             revu-state-${{ github.repository }}-pr-${{ steps.pr.outputs.number }}-pr-
-      - uses: greadee/review-engine@7de258fcb3c50467bdc87f89443af800527f706a
+      - uses: greadee/review-engine@b78acc204c23f3d7015efee7dd002f26fbc96cd9
         with:
           phase: finalize
           repository: ${{ github.event.workflow_run.repository.full_name }}

@@ -4,7 +4,7 @@
 #
 #   jobs:
 #     review:
-#       uses: greadee/review-engine/.github/workflows/review.yml@7de258fcb3c50467bdc87f89443af800527f706a
+#       uses: greadee/review-engine/.github/workflows/review.yml@b78acc204c23f3d7015efee7dd002f26fbc96cd9
 #       with:
 #         profile: pr
 #         base: origin/main
@@ -73,7 +73,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: greadee/review-engine@7de258fcb3c50467bdc87f89443af800527f706a
+      - uses: greadee/review-engine@b78acc204c23f3d7015efee7dd002f26fbc96cd9
         with:
           phase: collect
           profile: ${{ inputs.profile }}
@@ -109,7 +109,7 @@ jobs:
           key: revu-state-${{ github.repository }}-pr-${{ inputs.pr }}-${{ inputs.profile }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             revu-state-${{ github.repository }}-pr-${{ inputs.pr }}-${{ inputs.profile }}-
-      - uses: greadee/review-engine@7de258fcb3c50467bdc87f89443af800527f706a
+      - uses: greadee/review-engine@b78acc204c23f3d7015efee7dd002f26fbc96cd9
         with:
           phase: finalize
           model: ${{ inputs.model }}
